@@ -1,0 +1,36 @@
+# Dependabot version updates. Security updates are enabled separately in the
+# repo's Security settings and are unaffected by this file.
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates
+version: 2
+updates:
+  # NuGet packages for the server and its test project.
+  - package-ecosystem: "nuget"
+    directories:
+      - "/src/FocusWall.Server"
+      - "/tests/FocusWall.Server.Tests"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per project for all minor/patch bumps to cut review noise.
+      nuget-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Base image in the server Dockerfile.
+  - package-ecosystem: "docker"
+    directory: "/src/FocusWall.Server"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Action versions in .github/workflows/*. No workflows are tracked today
+  # (the deploy workflow is intentionally kept out of this repo), so this is
+  # a no-op until one is added — at which point Dependabot keeps its actions
+  # pinned and patched automatically.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
