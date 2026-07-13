@@ -1,0 +1,210 @@
+:root {
+  --bg: #0f1115;
+  --bg-elev: #161922;
+  --fg: #eaeaea;
+  --fg-dim: #8a8f99;
+  --fg-faint: #555a64;
+  --border: #2a2e38;
+
+  --idle: #5a5f6b;
+  --working: #378ADD;
+  --waiting: #BA7517;
+  --done: #1D9E75;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+  font-family: ui-sans-serif, system-ui, sans-serif; height: 100%; }
+body { overflow: hidden; }
+main {
+  padding: 2.5vh 3vw;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto auto auto 1fr;
+  gap: 2.5vh;
+}
+
+.topbar { display: flex; align-items: center; gap: 16px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 500; font-size: 16px; }
+.brand-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--working); }
+.clock { font-variant-numeric: tabular-nums; color: var(--fg-dim); margin-left: auto; font-size: 14px; }
+.conn { font-size: 12px; color: var(--fg-faint); padding: 4px 8px; border: 0.5px solid var(--border); border-radius: 6px; }
+.conn.live { color: var(--done); border-color: var(--done); }
+.conn.dead { color: var(--waiting); border-color: var(--waiting); animation: waitpulse 2s ease-in-out infinite; }
+
+.hero {
+  background: var(--bg-elev);
+  border-radius: 16px;
+  padding: 4vh 3vw;
+  border-left: 6px solid var(--idle);
+  transition: border-color .3s;
+}
+.hero-label { color: var(--fg-dim); font-size: 13px; letter-spacing: .5px; }
+.hero-title { margin: 8px 0 6px; font-size: clamp(48px, 8vw, 110px); font-weight: 500; line-height: 1; }
+.hero-detail { margin: 0; color: var(--fg-dim); font-size: clamp(18px, 2vw, 28px); }
+.hero-summary { margin: 8px 0 0; color: var(--fg-faint); font-size: 15px; font-variant-numeric: tabular-nums; }
+.hero-since { margin: 12px 0 0; color: var(--fg-faint); font-size: 14px; font-variant-numeric: tabular-nums; }
+
+[data-status="waiting"] .hero { border-color: var(--waiting); animation: waitpulse 2s ease-in-out infinite; }
+[data-status="waiting"] .hero-title { color: var(--waiting); }
+[data-status="working"] .hero { border-color: var(--working); }
+[data-status="done"] .hero { border-color: var(--done); }
+[data-status="done"] .hero-title { color: var(--done); }
+
+/* Mini session strip (hero.html) — compact status of the sessions the hero
+   isn't already featuring. Hidden entirely when there are none, so the
+   single-session hero is unchanged. When shown, main grows a 5th row for it. */
+main.has-strip { grid-template-rows: auto auto auto auto 1fr; }
+.sessions-strip { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.strip-title { color: var(--fg-dim); font-size: 13px; letter-spacing: .5px; }
+.strip-cards { display: flex; flex-wrap: wrap; gap: 14px; min-width: 0; }
+.mini {
+  background: var(--bg-elev);
+  border-radius: 12px;
+  padding: 12px 16px;
+  border-left: 5px solid var(--idle);
+  display: flex; flex-direction: column; gap: 6px;
+  flex: 0 1 220px; min-width: 170px; max-width: 320px;
+  transition: border-color .3s, background .3s;
+}
+.mini-status { display: flex; align-items: center; gap: 8px; }
+.mini-status .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--idle); }
+.mini-status .word { font-size: 15px; font-weight: 500; color: var(--fg-dim); }
+.mini-project { font-size: 22px; font-weight: 500; line-height: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-foot { display: flex; gap: 8px; align-items: baseline; justify-content: space-between;
+  color: var(--fg-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mini-host { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-time { flex: 0 0 auto; }
+
+.mini[data-status="working"] { border-color: var(--working); }
+.mini[data-status="working"] .dot { background: var(--working); }
+.mini[data-status="working"] .word { color: var(--working); }
+.mini[data-status="done"] { border-color: var(--done); }
+.mini[data-status="done"] .dot { background: var(--done); }
+.mini[data-status="done"] .word { color: var(--done); }
+.mini[data-status="idle"] .dot { background: var(--idle); }
+.mini[data-status="idle"] .word { color: var(--fg-dim); }
+.mini[data-status="waiting"] {
+  border-color: var(--waiting);
+  background: rgba(186, 117, 23, 0.14);
+  animation: waitpulse 2s ease-in-out infinite;
+}
+.mini[data-status="waiting"] .dot { background: var(--waiting); }
+.mini[data-status="waiting"] .word { color: var(--waiting); }
+
+.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.metric { background: var(--bg-elev); border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; gap: 4px; }
+.metric-label { color: var(--fg-dim); font-size: 13px; }
+.metric-value { font-size: 28px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.log { background: var(--bg-elev); border-radius: 12px; padding: 18px 22px; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+.log-title { color: var(--fg-dim); font-size: 13px; font-weight: 500; margin-bottom: 12px; }
+.log-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.log-list li { display: grid; grid-template-columns: 62px 12px 110px 130px 1fr; align-items: center; gap: 10px; font-size: 14px; }
+.log-list li .time { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.log-list li .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-faint); }
+.log-list li .badge {
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--fg-dim); background: rgba(255,255,255,.04);
+  padding: 3px 7px; border-radius: 5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.log-list li .type { color: var(--fg-dim); }
+.log-list li .detail { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.log-list li[data-kind="Notification"] .dot { background: var(--waiting); }
+.log-list li[data-kind="Stop"] .dot { background: var(--done); }
+.log-list li[data-kind="SessionStart"] .dot { background: var(--working); }
+.log-list li[data-kind="SessionEnd"] .dot { background: var(--idle); }
+
+/* --- Grid view (index.html / grid.js) --- */
+/* Grid page has only 2 rows (topbar + grid), unlike the hero's 4. Override the
+   generic `main` template so the grid section gets the 1fr track — otherwise it
+   sits in an `auto` row: won't fill the wall, empty state isn't centered, and
+   overflow scroll never engages. */
+.grid-page { grid-template-rows: auto 1fr; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 2vh 2vw;
+  align-content: start;
+  overflow-y: auto;
+  min-height: 0;
+}
+.grid-empty {
+  color: var(--fg-dim);
+  font-size: clamp(20px, 3vw, 36px);
+  display: flex; align-items: center; justify-content: center;
+  height: 100%;
+}
+.card {
+  background: var(--bg-elev);
+  border-radius: 16px;
+  padding: 3vh 2vw;
+  border-left: 6px solid var(--idle);
+  display: flex; flex-direction: column; gap: 10px;
+  transition: border-color .3s, background .3s;
+}
+.card-status { display: flex; align-items: center; gap: 10px; }
+.card-status .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--idle); }
+.card-status .status-word { font-size: clamp(18px, 2vw, 28px); font-weight: 500; }
+.card-project { font-size: clamp(28px, 4vw, 56px); font-weight: 500; line-height: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-meta { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
+.card-host { color: var(--fg-dim); font-size: 14px; }
+.card-branch { color: var(--fg-faint); font-size: 14px; font-variant-numeric: tabular-nums;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-branch::before { content: "· "; }
+.card-working-on { color: var(--fg); font-size: clamp(14px, 1.6vw, 18px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-age { color: var(--fg-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.card-activity { color: var(--fg-dim); font-size: clamp(14px, 1.5vw, 18px); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-time { color: var(--fg-faint); font-size: 15px; font-variant-numeric: tabular-nums; margin-top: auto; }
+.card-msg { color: var(--waiting); font-size: clamp(15px, 1.6vw, 20px); margin-top: 4px; }
+
+.card[data-status="working"] { border-color: var(--working); }
+.card[data-status="working"] .dot { background: var(--working); }
+.card[data-status="working"] .status-word { color: var(--working); }
+.card[data-status="done"] { border-color: var(--done); }
+.card[data-status="done"] .dot { background: var(--done); }
+.card[data-status="done"] .status-word { color: var(--done); }
+.card[data-status="idle"] .dot { background: var(--idle); }
+.card[data-status="idle"] .status-word { color: var(--fg-dim); }
+
+/* Waiting gets the loud, unmissable treatment — there's no single hero here. */
+.card[data-status="waiting"] {
+  border-color: var(--waiting);
+  background: rgba(186, 117, 23, 0.14);
+  animation: waitpulse 2s ease-in-out infinite;
+}
+.card[data-status="waiting"] .dot { background: var(--waiting); }
+.card[data-status="waiting"] .status-word { color: var(--waiting); }
+@keyframes waitpulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(186, 117, 23, 0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(186, 117, 23, 0.25); }
+}
+
+/* --- /wall rotator + news ticker (wall.html / wall.js) --- */
+/* body carries .wall-page here; override the global hidden-overflow grid body. */
+body.wall-page { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.wall-views { flex: 1 1 auto; position: relative; min-height: 0; }
+.wall-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.wall-frame[hidden] { display: none; }
+
+.ticker {
+  flex: 0 0 auto; overflow: hidden; white-space: nowrap;
+  border-bottom: 1px solid var(--border); background: var(--bg-elev);
+  padding: 10px 0;
+}
+.ticker-track { display: inline-block; }
+.ticker-track.scrolling { animation: ticker-scroll 90s linear infinite; }
+.ticker-item { display: inline-block; margin-right: 3rem;
+  color: var(--fg-dim); font-size: clamp(15px, 1.6vw, 20px); }
+.ticker-src { color: var(--working); font-weight: 600; margin-right: .5rem;
+  text-transform: uppercase; letter-spacing: .03em; font-size: .85em; }
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}

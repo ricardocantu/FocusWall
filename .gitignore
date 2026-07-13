@@ -1,0 +1,44 @@
+# --- .NET build output ---
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+publish/
+[Pp]ublish[Oo]utput/
+
+# NuGet
+*.nupkg
+.nuget/
+project.lock.json
+
+# Test results / coverage
+[Tt]est[Rr]esults/
+*.trx
+coverage/
+*.coverage
+*.coveragexml
+
+# --- IDE / editor ---
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Local config / secrets (trusted-LAN model, but never commit these) ---
+appsettings.*.local.json
+*.local.json
+.env
+.env.local
+*.pem
+*.key
+
+# --- Superpowers working docs (specs/plans are transient; deleted after implementation) ---
+# Tracked docs live elsewhere; keep the scratch workflow docs out of git.
+docs/superpowers/

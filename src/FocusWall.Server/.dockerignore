@@ -1,0 +1,13 @@
+# Host build output — the image builds its own via `dotnet publish`.
+# Without this, `COPY . .` drags the host net10.0 build (and its arch)
+# into the image context.
+bin/
+obj/
+
+# Local-only dev config; the container binds 0.0.0.0:5050 via Program.cs.
+Properties/launchSettings.json
+
+# Editor / OS cruft
+.vs/
+*.user
+.DS_Store

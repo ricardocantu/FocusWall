@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- viewport-fit=cover so the safe-area insets in mobile.css engage on notched phones -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Claude Focus Wall — Mobile</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/mobile.css">
+</head>
+<body class="mobile-page">
+  <header class="m-top">
+    <div class="brand"><span class="brand-dot"></span><span>Focus Wall</span></div>
+    <div class="conn" id="conn">connecting…</div>
+  </header>
+
+  <!-- Glance banner: the loudest status across all sessions. Sticks to the top
+       so the answer to "does Claude need me?" stays on screen while you scroll. -->
+  <section class="m-summary" id="summary" data-status="idle">
+    <div class="m-summary-word" id="summary-word">—</div>
+    <div class="m-summary-sub" id="summary-sub"></div>
+  </section>
+
+  <!-- Single-column session list. Cards reuse the grid's .card classes, so
+       app.css styles + the waiting pulse apply unchanged. -->
+  <section class="m-list" id="list"></section>
+
+  <script src="/mobile.js" type="module"></script>
+</body>
+</html>

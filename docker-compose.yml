@@ -1,0 +1,38 @@
+services:
+  focus-wall:
+    build: ./src/FocusWall.Server
+    image: focus-wall:latest
+    container_name: focus-wall
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    environment:
+      # Container default is UTC; the quiet-hours settings (ECHO_SHOW.md,
+      # DISCORD.md) evaluate in this timezone. Set to yours.
+      TZ: "Etc/UTC"
+      # Discord notifications (Phase 6b). DISCORD_WEBHOOK_URL comes from .env
+      # (gitignored); if unset, DiscordNotifier self-disables and the dashboard
+      # is unaffected. Dashboard URL points at the Pi over mDNS
+      # (focus-wall.local); if mDNS is unreliable on your network, use the
+      # Pi's LAN IP instead (e.g. http://192.168.1.50:5050/).
+      DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL}"
+      DISCORD_DASHBOARD_URL: "http://focus-wall.local:5050/"
+      DISCORD_COOLDOWN_SECONDS: "120"
+      DISCORD_QUIET_START: "22:00"
+      DISCORD_QUIET_END: "07:30"
+      # Echo Show announcements (Phase 6a). VOICEMONKEY_TOKEN / VOICEMONKEY_DEVICE
+      # come from .env (gitignored); if either is unset, EchoAnnouncer
+      # self-disables and the dashboard is unaffected. Quiet hours evaluate in
+      # the TZ set above (ECHO_SHOW.md).
+      VOICEMONKEY_TOKEN: "${VOICEMONKEY_TOKEN}"
+      VOICEMONKEY_DEVICE: "${VOICEMONKEY_DEVICE}"
+      VOICEMONKEY_COOLDOWN_SECONDS: "120"
+      VOICEMONKEY_QUIET_START: "22:00"
+      VOICEMONKEY_QUIET_END: "07:30"
+    healthcheck:
+      # The aspnet base image ships neither wget nor curl; a bash /dev/tcp
+      # connect is enough to prove the server is accepting connections.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/5050"]
+      interval: 30s
+      timeout: 3s
+      retries: 3

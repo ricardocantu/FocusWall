@@ -1,0 +1,58 @@
+/* --- /mobile companion view (mobile.html / mobile.js) --- */
+/* Reuses app.css color vars, .card styling, and the waitpulse keyframes; only
+   overrides layout for a phone: a scrollable page with a sticky glance banner
+   and a single-column list. Not a kiosk — no cursor hiding. */
+
+/* The global body sets overflow:hidden + fixed height for the wall views; a
+   phone needs to scroll, so override for this page only. */
+body.mobile-page {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  height: auto;
+  min-height: 100%;
+  padding:
+    env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.m-top {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px 10px;
+}
+.m-top .brand { font-size: 15px; }
+.m-top .conn { margin-left: auto; }
+
+.m-summary {
+  position: sticky; top: 0; z-index: 10;
+  background: var(--bg-elev);
+  border-left: 6px solid var(--idle);
+  border-radius: 14px;
+  margin: 0 12px 14px;
+  padding: 20px 18px;
+  transition: border-color .3s, background .3s;
+}
+.m-summary-word { font-size: clamp(30px, 9vw, 46px); font-weight: 500; line-height: 1.05; }
+.m-summary-sub {
+  margin-top: 8px; color: var(--fg-dim); font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.m-summary[data-status="working"] { border-color: var(--working); }
+.m-summary[data-status="working"] .m-summary-word { color: var(--working); }
+.m-summary[data-status="done"] { border-color: var(--done); }
+.m-summary[data-status="done"] .m-summary-word { color: var(--done); }
+.m-summary[data-status="idle"] .m-summary-word { color: var(--fg-dim); }
+.m-summary[data-status="waiting"] {
+  border-color: var(--waiting);
+  background: rgba(186, 117, 23, 0.14);
+  animation: waitpulse 2s ease-in-out infinite;
+}
+.m-summary[data-status="waiting"] .m-summary-word { color: var(--waiting); }
+
+.m-list { display: flex; flex-direction: column; gap: 14px; padding: 0 12px 24px; }
+
+/* .card uses vh/vw padding + font clamps tuned for the wall; on a phone those
+   collapse to their minimums, so give the cards comfortable fixed sizing. */
+.m-list .card { padding: 18px; gap: 8px; }
+.m-list .card-project { font-size: 24px; }
+.m-list .grid-empty { height: 40vh; font-size: 20px; }

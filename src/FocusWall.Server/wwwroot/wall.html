@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Focus Wall — Wall</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body class="wall-page">
+  <header class="ticker" id="ticker" aria-hidden="true">
+    <div class="ticker-track" id="ticker-track">
+      <span class="ticker-item">Loading news…</span>
+    </div>
+  </header>
+  <div class="wall-views">
+    <iframe class="wall-frame" id="frame-grid" src="/?kiosk=1" title="Session grid"></iframe>
+    <iframe class="wall-frame" id="frame-hero" src="/hero?kiosk=1" title="Status hero" hidden></iframe>
+  </div>
+  <script src="/wall.js" type="module"></script>
+</body>
+</html>

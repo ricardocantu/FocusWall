@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Focus Wall</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main id="app" data-status="idle">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span>Claude Focus Wall</span>
+      </div>
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="conn" id="conn">connecting…</div>
+    </header>
+
+    <section class="hero" id="hero">
+      <div class="hero-label">Status</div>
+      <h1 class="hero-title" id="hero-title">Idle</h1>
+      <p class="hero-detail" id="hero-detail">No active sessions</p>
+      <p class="hero-summary" id="hero-summary"></p>
+      <p class="hero-since" id="hero-since">—</p>
+    </section>
+
+    <section class="sessions-strip" id="sessions-strip" hidden>
+      <div class="strip-title">Other sessions</div>
+      <div class="strip-cards" id="strip-cards"></div>
+    </section>
+
+    <section class="metrics">
+      <div class="metric"><span class="metric-label">Sessions</span><span class="metric-value" id="m-sessions">0</span></div>
+      <div class="metric"><span class="metric-label">Tool calls</span><span class="metric-value" id="m-tools">0</span></div>
+      <div class="metric"><span class="metric-label">Edits</span><span class="metric-value" id="m-edits">0</span></div>
+      <div class="metric"><span class="metric-label">Last event</span><span class="metric-value" id="m-last">—</span></div>
+    </section>
+
+    <section class="log">
+      <div class="log-title">Recent events</div>
+      <ul class="log-list" id="log-list"></ul>
+    </section>
+  </main>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
