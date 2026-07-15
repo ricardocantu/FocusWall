@@ -55,11 +55,9 @@ docker run --rm hello-world
 
 ## 4. Deploy the server
 
-Two ways to get the server running on the Pi. The **manual path (4b)** is the default and works on any repo, public or private. The **runner path (4a)** is an optional convenience for **private** repos only.
+Two ways to get the server running on the Pi. Use the runner path (4a) if the repo is private — that's what this project is built around. Fall back to the manual path (4b) if you don't want CI involved, or to sanity-check Docker on the Pi before wiring up the runner.
 
-### 4a. Automated deploy via self-hosted runner (optional — private repos only)
-
-> **This repository does not ship the workflow file.** `.github/workflows/deploy.yml` was deliberately left out so this repo is safe to publish. To use this path, copy the workflow YAML from `IMPLEMENTATION.md` § "Phase 2 — containerize" into a fork you keep **private**, then follow the steps below.
+### 4a. Automated deploy via self-hosted runner (recommended)
 
 **The repo must be private for this.** GitHub is explicit that self-hosted runners on public repos are a known attack vector — anyone who opens a PR can get their workflow code executed on the runner, which here is your physical Pi. If you ever make the repo public, remove the runner first.
 
@@ -79,9 +77,11 @@ Two ways to get the server running on the Pi. The **manual path (4b)** is the de
    sudo ./svc.sh start
    sudo ./svc.sh status   # confirm it's running
    ```
-4. Add `.github/workflows/deploy.yml` (copy the contents from `IMPLEMENTATION.md` § "Phase 2 — containerize" — it is not shipped in this repo) to your **private** fork and push to `main` from your workstation.
+4. Activate the workflow: the repo ships an inert sample at `.github/workflows/deploy.yml.example` (GitHub ignores non-`.yml` files, so it never runs until you rename it). Copy it to `.github/workflows/deploy.yml` — or paste the fuller contents from `IMPLEMENTATION.md` § "Phase 2 — containerize" — then push to `main` from your workstation.
 5. Watch it run: repo → **Actions** tab. The job checks the repo out into the runner's own work directory and runs `docker compose up -d --build` right there — no registry involved.
-6. If you're using Phase 6 (Echo Show / Discord), the `.env` file needs to exist once in that checkout directory — SSH in and create it (per `ECHO_SHOW.md` / `DISCORD.md`) at `~/actions-runner/_work/<repo>/<repo>/.env`. The workflow's `clean: false` checkout leaves it alone on every subsequent deploy.
+6. If you're using any of the optional secret-backed channels — Echo Show, Discord, or the Slack panel — add each token as a **GitHub Actions repository secret** (repo → **Settings → Secrets and variables → Actions → New repository secret**). `deploy.yml`'s deploy step injects them as env vars (`${{ secrets.* }}`), and `docker-compose.yml` interpolates them into the container; they're masked in logs. The full set (`DISCORD_WEBHOOK_URL`, `VOICEMONKEY_TOKEN`/`VOICEMONKEY_DEVICE`, `SLACK_WS0_*`/`SLACK_WS1_*`) is listed in `docker-compose.yml`, and each channel's turn-on steps are in `ECHO_SETUP_CHECKLIST.md`, `DISCORD_SETUP_CHECKLIST.md`, and `SLACK_SETUP_CHECKLIST.md`. Any secret left unset just disables that one channel — none are required for the wall itself.
+
+   *Local/manual alternative:* instead of GitHub secrets you can drop the same `KEY=value` lines in a gitignored `.env` beside `docker-compose.yml` on the runner (`~/actions-runner/_work/<repo>/<repo>/.env`); the workflow's `clean: false` checkout preserves it across deploys.
 
 From here, every `git push` to `main` redeploys automatically — no more SSH-and-pull.
 
@@ -330,4 +330,4 @@ If step 4 fails, your bench setup wasn't actually self-recovering — go back to
 
 ## Done
 
-When the Pi survives an unannounced power cycle and shows the dashboard again with no keyboard, you're done with deployment.
+When the Pi survives an unannounced power cycle and shows the dashboard again with no keyboard, you're done with deployment. Phase 4 (polish against the real wall) and beyond are next.

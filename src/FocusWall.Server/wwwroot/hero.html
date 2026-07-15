@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Claude Focus Wall</title>
   <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/usage.css">
 </head>
 <body>
   <main id="app" data-status="idle">
@@ -17,12 +18,19 @@
       <div class="conn" id="conn">connecting…</div>
     </header>
 
-    <section class="hero" id="hero">
-      <div class="hero-label">Status</div>
-      <h1 class="hero-title" id="hero-title">Idle</h1>
-      <p class="hero-detail" id="hero-detail">No active sessions</p>
-      <p class="hero-summary" id="hero-summary"></p>
-      <p class="hero-since" id="hero-since">—</p>
+    <section class="dash-row">
+      <section class="hero" id="hero">
+        <div class="hero-label">Status</div>
+        <h1 class="hero-title" id="hero-title">Idle</h1>
+        <p class="hero-detail" id="hero-detail">No active sessions</p>
+        <p class="hero-summary" id="hero-summary"></p>
+        <p class="hero-since" id="hero-since">—</p>
+      </section>
+
+      <aside class="slack-panel" id="slack-panel" hidden>
+        <div class="slack-panel-title">Slack</div>
+        <div class="slack-accounts" id="slack-accounts"></div>
+      </aside>
     </section>
 
     <section class="sessions-strip" id="sessions-strip" hidden>
@@ -30,18 +38,28 @@
       <div class="strip-cards" id="strip-cards"></div>
     </section>
 
-    <section class="metrics">
-      <div class="metric"><span class="metric-label">Sessions</span><span class="metric-value" id="m-sessions">0</span></div>
-      <div class="metric"><span class="metric-label">Tool calls</span><span class="metric-value" id="m-tools">0</span></div>
-      <div class="metric"><span class="metric-label">Edits</span><span class="metric-value" id="m-edits">0</span></div>
-      <div class="metric"><span class="metric-label">Last event</span><span class="metric-value" id="m-last">—</span></div>
-    </section>
-
-    <section class="log">
-      <div class="log-title">Recent events</div>
-      <ul class="log-list" id="log-list"></ul>
+    <section class="bottom-band" id="bottom-band">
+      <section class="band-panel active" id="panel-metrics">
+        <div class="metrics">
+          <div class="metric"><span class="metric-label">Sessions</span><span class="metric-value" id="m-sessions">0</span></div>
+          <div class="metric"><span class="metric-label">Tool calls</span><span class="metric-value" id="m-tools">0</span></div>
+          <div class="metric"><span class="metric-label">Edits</span><span class="metric-value" id="m-edits">0</span></div>
+          <div class="metric"><span class="metric-label">Last event</span><span class="metric-value" id="m-last">—</span></div>
+        </div>
+      </section>
+      <section class="band-panel" id="panel-log">
+        <div class="log">
+          <div class="log-title">Recent events</div>
+          <ul class="log-list" id="log-list"></ul>
+        </div>
+      </section>
+      <section class="band-panel" id="panel-usage">
+        <div class="log-title band-usage-title">Usage</div>
+        <div class="usage-accounts" id="usage-accounts"></div>
+      </section>
     </section>
   </main>
   <script src="/app.js" type="module"></script>
+  <script src="/usage.js" type="module"></script>
 </body>
 </html>

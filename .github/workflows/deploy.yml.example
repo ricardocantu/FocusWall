@@ -1,0 +1,112 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SAMPLE — this file does NOT run.
+#
+# GitHub Actions only parses files ending in .yml / .yaml inside
+# .github/workflows/. This .example file is ignored entirely: nothing here is
+# triggered by a push, a pull request, or a manual dispatch.
+#
+# This is the real health-gated deploy workflow (matches what runs on the Pi).
+# To activate it:
+#   1. Make the repo PRIVATE first. A self-hosted runner on a public repo lets
+#      PR-submitted workflow code execute on your physical Pi (see
+#      DEPLOYMENT.md § 4a). Do not skip this.
+#   2. Register the self-hosted runner on the Pi with the label `focus-wall-pi`
+#      (DEPLOYMENT.md § 4a, steps 1–3).
+#   3. Add each optional channel's token as a GitHub Actions *repository secret*
+#      (Settings → Secrets and variables → Actions) — the env block below reads
+#      them. Any unset secret just disables that one channel. See the
+#      *_SETUP_CHECKLIST.md files for which secrets each channel needs.
+#   4. Rename this file to `deploy.yml` and push to `main`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy to Pi
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, focus-wall-pi]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # actions/checkout defaults to `git clean -ffdx` before checkout,
+          # which would delete the runner's untracked .env file (holds
+          # VOICEMONKEY_TOKEN / DISCORD_WEBHOOK_URL if Phase 6 is in use).
+          clean: false
+
+      - name: Build, deploy, and health-check (auto-recover on failure)
+        # Cached build for speed. Then GATE on /healthz: if the container isn't
+        # serving within 60s — e.g. a corrupt build-cache layer produced a broken
+        # image (the 0-byte FocusWall.Server.runtimeconfig.json incident: mmap
+        # EINVAL → .NET host can't start → crash-loop → dead :5050) — rebuild once
+        # with --no-cache to bypass the poisoned cache. If it is STILL unhealthy,
+        # FAIL the job without reloading the kiosk, so the wall keeps showing the
+        # last good page instead of going blank on a silent failure.
+        run: |
+          healthy() {
+            for i in $(seq 1 60); do
+              curl -sf http://localhost:5050/healthz > /dev/null 2>&1 && return 0
+              sleep 1
+            done
+            return 1
+          }
+
+          docker compose up -d --build || { echo "::error::cached build/up failed"; exit 1; }
+          if healthy; then echo "Healthy after cached build."; exit 0; fi
+
+          echo "::warning::Unhealthy after cached build — rebuilding with --no-cache (possible corrupt build cache)."
+          docker compose build --no-cache || { echo "::error::--no-cache build failed"; exit 1; }
+          docker compose up -d || { echo "::error::up after --no-cache failed"; exit 1; }
+          if healthy; then echo "Healthy after clean --no-cache rebuild."; exit 0; fi
+
+          echo "::error::Still unhealthy after clean rebuild — NOT reloading kiosk (last good page stays up). Recent state:"
+          docker compose ps || true
+          docker compose logs --tail 50 focus-wall 2>&1 || true
+          exit 1
+        env:
+          # Injected from a repository *secret* (Settings → Secrets and
+          # variables → Actions), not a variable — the webhook URL is
+          # password-like and must stay masked. docker compose reads it from
+          # the shell env for the ${DISCORD_WEBHOOK_URL} interpolation in
+          # docker-compose.yml. Empty/unset → DiscordNotifier self-disables.
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # VOICEMONKEY_TOKEN / VOICEMONKEY_DEVICE for Echo Show announcements
+          # (Phase 6a). Same secret pattern as Discord — masked, read by docker
+          # compose for the ${VOICEMONKEY_*} interpolation. Unset → EchoAnnouncer
+          # self-disables.
+          VOICEMONKEY_TOKEN: ${{ secrets.VOICEMONKEY_TOKEN }}
+          VOICEMONKEY_DEVICE: ${{ secrets.VOICEMONKEY_DEVICE }}
+          # Slack unread panel. Session tokens are password-like → repository
+          # *secrets*, masked in logs. docker compose reads them for the
+          # ${SLACK_WS*} interpolation. Unset → SlackService self-disables.
+          SLACK_WS0_LABEL: ${{ secrets.SLACK_WS0_LABEL }}
+          SLACK_WS0_TOKEN: ${{ secrets.SLACK_WS0_TOKEN }}
+          SLACK_WS0_COOKIE: ${{ secrets.SLACK_WS0_COOKIE }}
+          SLACK_WS1_LABEL: ${{ secrets.SLACK_WS1_LABEL }}
+          SLACK_WS1_TOKEN: ${{ secrets.SLACK_WS1_TOKEN }}
+          SLACK_WS1_COOKIE: ${{ secrets.SLACK_WS1_COOKIE }}
+
+      - name: Reload kiosk browser
+        # Only reached when the previous step exited 0 — i.e. the server is
+        # CONFIRMED healthy. So an unhealthy/failed deploy never blanks the wall:
+        # the old /wall page keeps running (sse.js just reconnects the dropped SSE
+        # stream; it does NOT reload the document). On a healthy deploy, killing
+        # Chromium makes the labwc autostart respawn loop (PHASE2-RUNBOOK.md
+        # §autostart) relaunch it on the fresh /wall page (~2s black, then reload)
+        # so new frontend assets appear. We deliberately do NOT reboot the Pi: the
+        # self-hosted runner *is* this Pi, so `reboot` would kill this job mid-run.
+        # Needs the runner to run as the labwc session user (or root) to signal
+        # the process; if it runs as a separate user, prefix with `sudo -n`.
+        run: pkill -f 'chromium.*--kiosk' || true
+
+      - name: Prune build cache and dangling images
+        # Always run — even after a failed deploy — so a poisoned or oversized
+        # build cache can't persist into the next run (the corrupt-layer failure
+        # mode above). Keep up to 2GB of recent cache so normal deploys stay fast;
+        # trim the rest. Fallbacks tolerate older Docker without --keep-storage.
+        if: always()
+        run: |
+          docker builder prune -f --keep-storage=2GB || docker builder prune -f || true
+          docker image prune -f || true

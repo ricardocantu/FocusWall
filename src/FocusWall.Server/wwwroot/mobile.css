@@ -48,6 +48,21 @@ body.mobile-page {
   animation: waitpulse 2s ease-in-out infinite;
 }
 .m-summary[data-status="waiting"] .m-summary-word { color: var(--waiting); }
+/* Snoozed: calm + dimmed, no pulse — a snoozed wall must not read as an alert. */
+.m-summary[data-status="snoozed"] { border-color: var(--idle); background: var(--bg-elev); }
+.m-summary[data-status="snoozed"] .m-summary-word { color: var(--fg-dim); }
+
+/* Snooze remote — touch targets sized for a thumb. */
+.m-snooze { display: flex; gap: 10px; padding: 0 12px 14px; }
+.m-snooze-btn {
+  flex: 1; min-height: 48px;
+  background: var(--bg-elev); color: var(--fg);
+  border: 0.5px solid var(--border); border-radius: 12px;
+  font-size: 16px; font-weight: 500;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-snooze-btn:active { background: var(--border); }
+.m-snooze-clear { color: var(--waiting); border-color: var(--waiting); }
 
 .m-list { display: flex; flex-direction: column; gap: 14px; padding: 0 12px 24px; }
 

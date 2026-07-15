@@ -46,6 +46,15 @@ public class EchoAnnouncer(
                     if (_lastAnnouncedStatus.TryGetValue(session.Key, out var prev) && prev == "waiting")
                         continue;  // this session already announced its waiting
 
+                    if (global.SnoozedUntil > DateTimeOffset.UtcNow)
+                    {
+                        // Mark as announced so it doesn't back-fire the instant
+                        // snooze ends — same bookkeeping as quiet hours.
+                        log.LogInformation("Suppressed (snoozed) for {Session}", session.Key.Short);
+                        _lastAnnouncedStatus[session.Key] = "waiting";
+                        continue;
+                    }
+
                     if (IsQuietHours())
                     {
                         log.LogInformation("Suppressed (quiet hours) for {Session}", session.Key.Short);

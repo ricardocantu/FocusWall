@@ -2,7 +2,7 @@
 
 A single top-to-bottom path through this project. It doesn't duplicate code or steps that already live in the other docs — it sequences them and tells you exactly which file to open at each point.
 
-**Read this once, then work through it top to bottom.** Stop at each checkpoint and confirm it before moving on.
+**Read this once, then work through it top to bottom.** Stop at each checkpoint and confirm it before moving on — the checkpoints are the actual phase exit criteria, restated here so you don't have to cross-reference while your hands are on the keyboard.
 
 ## Where the other docs fit
 
@@ -11,21 +11,22 @@ A single top-to-bottom path through this project. It doesn't duplicate code or s
 | `README.md` | The 2-minute pitch. Skip if you're already sold. |
 | `ARCHITECTURE.md` | *Why* things are built this way — read once before you touch code, re-read if you're about to change the state machine. |
 | `IMPLEMENTATION.md` | Every file's actual contents. This guide tells you *when* to copy which block from it. |
-| `HARDWARE.md` | Buying the Pi and monitor. Only relevant once the local build works on your laptop. |
+| `HARDWARE.md` | Buying the Pi and monitor. Only relevant once Phase 1 works on your laptop. |
 | `DEPLOYMENT.md` | Flashing and configuring the Pi. Start this after Phase 1 (below) is done. |
 | `ECHO_SHOW.md` / `DISCORD.md` | Optional notification channels — Phase 6, after the wall itself works. Don't start these yet. |
+| `*_SETUP_CHECKLIST.md` (Echo / Discord / Slack) | Turn-on checklists for the optional channels and the Slack panel. Use once the wall works — not now. |
 
 ## Start here: Phase 0 — Prerequisites
 
-Install these on your workstation before you begin:
+Checked on this machine already:
 
-- **.NET 10 SDK** — the project targets **`net10.0`** (a newer SDK installed alongside an older one is harmless).
-- **`jq`** — the hook wrapper uses it to filter and augment payloads (`brew install jq` on macOS).
-- **Docker** — Docker Desktop or Docker Engine, for the Pi build later.
+- [x] .NET SDK — the project targets **`net10.0`**; you have `10.0.201` (and `9.0.300` alongside it, which is harmless)
+- [x] `jq` — installed (`jq-1.7.1`)
+- [x] Docker — installed (`29.3.1`)
+- [ ] A place for this to live long-term — Pi, small Linux VM, or existing infrastructure. Decide later; not a blocker for today.
+- [ ] Pick a hostname for the dashboard once you get to `DEPLOYMENT.md` — `focus-wall.local` is the suggested default and what the other docs assume.
 
-Two choices you can defer until you reach `DEPLOYMENT.md`: where the server will live long-term (the Pi, a small Linux VM, or existing infrastructure), and the dashboard hostname (`focus-wall.local` is the suggested default the other docs assume).
-
-Once the SDK, `jq`, and Docker are installed, you can start Phase 1.
+You can start Phase 1 right now — nothing left to install.
 
 ## Phase 1 — MVP server and dashboard (do this today)
 
@@ -77,7 +78,7 @@ Set up `tests/FocusWall.Server.Tests` per `IMPLEMENTATION.md` § "Unit tests —
 dotnet test tests/FocusWall.Server.Tests
 ```
 
-All four tests should pass, including `SecondSessionEnteringWaitingStillBroadcasts` — that one guards the multi-session broadcast fix, and it's the cheapest way to catch a regression before you ever touch two terminals.
+All the EventStore tests should pass, including `SecondSessionEnteringWaitingStillBroadcasts` — that one guards the multi-session broadcast fix, and it's the cheapest way to catch a regression before you ever touch two terminals. (The full suite grows as you add later features — it's 35 tests today across the state machine, RSS parser, usage store, snooze, and the Slack reducers — but only the EventStore ones exist at this point in the build.)
 
 ### Step 6 — Real session, then the multi-session acceptance test
 
@@ -93,5 +94,13 @@ You're done with Phase 1 when, during that multi-session script: Session A goes 
 You have a working local dashboard. From here the path forks by what you want next — pick one, or do them in this order:
 
 1. **Get it on the Pi.** Order hardware per `HARDWARE.md` (skip if you already have a Pi + monitor). Once parts are in hand: `DEPLOYMENT.md` start to finish (flash → Docker → deploy → kiosk mode → wall mount) — it's already sequenced step-by-step, just follow it. **Make the GitHub repo private before you get to the deploy step** — `DEPLOYMENT.md` § 4a sets up a self-hosted Actions runner on the Pi so every `git push` auto-deploys, and that path requires a private repo (GitHub's own warning: on a public repo, a self-hosted runner lets PR code execute on your hardware). If you'd rather not deal with a runner yet, § 4b is the plain manual `docker compose up -d` path.
-2. **Add a second workstation.** Trivial once the Pi is live — run `hooks/install-workstation.sh` on the second machine pointed at the same server (about 20 minutes, no server changes; see `hooks/README.md`).
+2. **Add a second workstation.** Trivial once Phase 2 is live — about 20 minutes, no server changes: run the workstation installer on the second machine.
 3. **Add notifications.** Once you've lived with the wall display for a few days and know whether you actually miss "waiting" moments away from your desk, `DISCORD.md` (fastest, ~30 min) or `ECHO_SHOW.md` (needs an Echo Show + Voice Monkey account, ~1 evening). Don't build these before the wall itself — both docs are explicit that this is easy to over-invest in early.
+4. **Turn on the extra views and panels.** The server already serves them; these are opt-in polish once the core wall is solid:
+   - **`/mobile`** — a phone companion with the **snooze** control (30m / 1h / clear) that silences the waiting alert without touching state. Nothing to configure; just open it on your phone.
+   - **`/usage`** — per-account subscription-limit gauges, fed by a per-workstation poller the installer sets up (macOS / Linux / Windows). Runs on its own once installed.
+   - **Slack panel** on the hero — your own unread badge per workspace. Optional/best-effort; follow `SLACK_SETUP_CHECKLIST.md` to supply the workspace token + cookie.
+
+   These aren't documented as build-it-yourself phases in `IMPLEMENTATION.md` — the code already ships them; see `CLAUDE.md` and the setup checklists for how they work.
+
+If you lose the thread on a later day, re-read this guide's checkpoints — they're the fastest re-orientation.

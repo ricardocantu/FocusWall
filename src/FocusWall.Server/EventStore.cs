@@ -32,7 +32,13 @@ public record GlobalStatus(
     int SessionCount,
     int WaitingCount,
     int WorkingCount,
-    List<SessionState> Sessions);
+    List<SessionState> Sessions,
+    // When non-null and in the future, the wall is snoozed: the client renders
+    // "Snoozed (Nm left)" instead of the waiting pulse and the notifiers stay
+    // quiet. Per-session Status values stay honest — snooze is an overlay, not
+    // a state-machine transition (the core invariant: status is derived from
+    // events, never overridden).
+    DateTimeOffset? SnoozedUntil = null);
 
 public record StreamMessage(string Kind, object Data);
 
@@ -66,6 +72,32 @@ public class EventStore
     // already waiting (the notifiers would never hear about it, and the
     // hero subtitle would name the wrong session).
     private string _lastBroadcastSignature = "";
+
+    // Global snooze overlay — user action via POST /snooze, not derived from
+    // events. Null (or in the past) means not snoozed.
+    private DateTimeOffset? _snoozedUntil;
+
+    // Snooze (or clear) the wall. minutes <= 0 clears. Broadcasts a fresh status
+    // immediately so every connected view + the notifiers react at once, rather
+    // than waiting for the next event or heartbeat.
+    public GlobalStatus Snooze(int minutes)
+    {
+        // Clamp to a sane range: <=0 clears, cap at 24h so a bogus LAN request
+        // (?minutes=999999999) can't overflow AddMinutes into a 500.
+        minutes = Math.Clamp(minutes, 0, 24 * 60);
+        GlobalStatus global;
+        lock (_lock)
+        {
+            _snoozedUntil = minutes > 0 ? DateTimeOffset.UtcNow.AddMinutes(minutes) : null;
+            global = ComputeGlobalStatusLocked();
+            // Refresh the signature so the natural expiry (snooze active → past)
+            // still triggers a heartbeat rebroadcast; the user-action broadcast
+            // below covers the set/clear itself.
+            _lastBroadcastSignature = ComputeSignatureLocked();
+        }
+        Broadcast(new StreamMessage("status", global));
+        return global;
+    }
 
     public EventEntry Add(JsonElement payload)
     {
@@ -219,9 +251,11 @@ public class EventStore
         }
         foreach (var k in toPrune) _sessions.Remove(k);
 
+        var snoozedUntil = _snoozedUntil > now ? _snoozedUntil : null;
+
         var active = _sessions.Values.ToList();
         if (active.Count == 0)
-            return new GlobalStatus("idle", now, 0, 0, 0, new());
+            return new GlobalStatus("idle", now, 0, 0, 0, new(), snoozedUntil);
 
         var loudest = active.MaxBy(s => _priority[s.Status])!;
         var loudestSince = active
@@ -234,13 +268,17 @@ public class EventStore
             SessionCount: active.Count,
             WaitingCount: active.Count(s => s.Status == "waiting"),
             WorkingCount: active.Count(s => s.Status == "working"),
-            Sessions: active.OrderByDescending(s => _priority[s.Status]).ToList());
+            Sessions: active.OrderByDescending(s => _priority[s.Status]).ToList(),
+            SnoozedUntil: snoozedUntil);
     }
 
     private string ComputeSignatureLocked() =>
+        // Include whether snooze is currently active so its expiry flips the
+        // signature and a heartbeat rebroadcasts the un-snoozed status.
         string.Join("|", _sessions
             .OrderBy(kv => kv.Key.Hostname).ThenBy(kv => kv.Key.SessionId)
-            .Select(kv => $"{kv.Key.Hostname}/{kv.Key.SessionId}={kv.Value.Status}"));
+            .Select(kv => $"{kv.Key.Hostname}/{kv.Key.SessionId}={kv.Value.Status}"))
+        + $"|snooze={_snoozedUntil > DateTimeOffset.UtcNow}";
 
     public IReadOnlyList<EventEntry> Snapshot()
     {

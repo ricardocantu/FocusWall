@@ -29,8 +29,8 @@
 set -euo pipefail
 
 # ---- defaults ---------------------------------------------------------------
-# Pi's reserved LAN IP (DHCP reservation). Preferred over focuswall.local —
-# mDNS proved unreliable across reboots on this network; see PHASE2-RUNBOOK.md §6.
+# Default to the Pi over mDNS (focus-wall.local). If mDNS is unreliable on your
+# network, pass --url with the Pi's LAN IP instead; see PHASE2-RUNBOOK.md §6.
 DEFAULT_URL="http://focus-wall.local:5050/events"
 INSTALL_DIR="${HOME}/.focus-wall"
 SETTINGS="${HOME}/.claude/settings.json"
@@ -73,6 +73,12 @@ while [ $# -gt 0 ]; do
 done
 
 WRAPPER="${INSTALL_DIR%/}/hook-send.sh"
+
+# ---- usage poller (scheduler) ------------------------------------------------
+FW_DIR="$INSTALL_DIR"
+POLL_DST="${FW_DIR%/}/usage-poll.sh"
+PLIST="$HOME/Library/LaunchAgents/com.focuswall.usage-poll.plist"
+SD_DIR="$HOME/.config/systemd/user"
 
 # ---- jq ---------------------------------------------------------------------
 # jq is required: without it the wrapper stops stripping tool_input, leaking
@@ -220,6 +226,70 @@ WRAPPER_EOF
   chmod +x "$WRAPPER"
 }
 
+# ---- usage poller -------------------------------------------------------------
+# Copies usage-poll.sh alongside the wrapper and registers a 5-minute scheduler
+# (launchd on macOS, systemd --user timer on Linux) so it runs unattended. OS
+# detection mirrors the rest of the installer: presence of launchctl means
+# macOS, else assume Linux + systemd. Idempotent — re-running overwrites the
+# copy and the scheduler unit in place (launchd is unloaded/reloaded; systemd
+# is re-enabled), so a re-run never duplicates a schedule.
+install_usage_poller() {
+  local poll_src="$(dirname "$0")/usage-poll.sh"
+  if [ ! -f "$poll_src" ]; then
+    warn "usage-poll.sh not found next to the installer — skipping usage poller (run the installer from the repo to enable it)."
+    return 0
+  fi
+  mkdir -p "$FW_DIR"
+  cp "$poll_src" "$POLL_DST"
+  chmod +x "$POLL_DST"
+
+  if command -v launchctl >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$PLIST")"
+    cat > "$PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.focuswall.usage-poll</string>
+  <key>ProgramArguments</key><array><string>$POLL_DST</string></array>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>EnvironmentVariables</key><dict>
+    <key>FOCUSWALL_URL</key><string>${FOCUSWALL_URL:-$URL}</string>
+    <key>FOCUSWALL_ACCOUNT_LABEL</key><string>${FOCUSWALL_ACCOUNT_LABEL:-$(hostname)}</string>
+  </dict>
+</dict></plist>
+PLIST_EOF
+    launchctl unload "$PLIST" 2>/dev/null || true
+    launchctl load "$PLIST" 2>/dev/null || true
+    ok "Installed launchd usage poller (every 5 min)."
+  elif command -v systemctl >/dev/null 2>&1; then
+    mkdir -p "$SD_DIR"
+    cat > "$SD_DIR/focuswall-usage.service" <<SVC_EOF
+[Unit]
+Description=Focus Wall usage poller
+[Service]
+Type=oneshot
+Environment=FOCUSWALL_URL=${FOCUSWALL_URL:-$URL}
+Environment=FOCUSWALL_ACCOUNT_LABEL=${FOCUSWALL_ACCOUNT_LABEL:-$(hostname)}
+ExecStart=$POLL_DST
+SVC_EOF
+    cat > "$SD_DIR/focuswall-usage.timer" <<TMR_EOF
+[Unit]
+Description=Run Focus Wall usage poller every 5 minutes
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target
+TMR_EOF
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable --now focuswall-usage.timer 2>/dev/null || true
+    ok "Installed systemd user usage timer (every 5 min)."
+  else
+    warn "No launchctl or systemctl found — install the poller scheduler manually."
+  fi
+}
+
 # ---- flows ------------------------------------------------------------------
 do_install() {
   say "Installing Claude Focus Wall reporting on this machine…"
@@ -246,6 +316,8 @@ do_install() {
   write_settings "$merged"
   ok "Hooks merged into $SETTINGS"
 
+  install_usage_poller
+
   # Non-fatal reachability check.
   if curl -sS --connect-timeout 2 -o /dev/null "$URL" 2>/dev/null; then
     ok "Server reachable at $URL"
@@ -267,6 +339,18 @@ do_uninstall() {
   local stripped; stripped="$(strip_hooks)"
   write_settings "$stripped"
   ok "Removed Focus Wall hooks from $SETTINGS"
+
+  if command -v launchctl >/dev/null 2>&1 && [ -f "$PLIST" ]; then
+    launchctl unload "$PLIST" 2>/dev/null || true
+    rm -f "$PLIST"
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user disable --now focuswall-usage.timer 2>/dev/null || true
+    rm -f "$SD_DIR/focuswall-usage.timer" "$SD_DIR/focuswall-usage.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+  fi
+  rm -f "$POLL_DST"
+  ok "Removed usage poller and scheduler"
 
   if [ -d "$INSTALL_DIR" ]; then
     if confirm "Also delete $INSTALL_DIR?"; then

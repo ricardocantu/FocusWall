@@ -68,7 +68,7 @@ doesn't match or the deploy ran before the secret existed — re-run the job.
 ## Step 7 — End-to-end test against the Pi
 
 ```bash
-curl -X POST http://<pi-ip>:5050/events \
+curl -X POST http://focus-wall.local:5050/events \
   -H 'Content-Type: application/json' \
   -d '{"hook_event_name":"Notification","session_id":"smoke-test","message":"Permission requested for Edit"}'
 ```

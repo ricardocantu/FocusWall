@@ -3,9 +3,12 @@ using FocusWall.Server;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<EventStore>();
+builder.Services.AddSingleton<UsageStore>();
 builder.Services.AddHostedService<HeartbeatService>();
 builder.Services.AddSingleton<RssCache>();
 builder.Services.AddHostedService<RssService>();
+builder.Services.AddSingleton<SlackCache>();
+builder.Services.AddHostedService<SlackService>();
 builder.Services.AddHttpClient();
 builder.Services.AddHostedService<DiscordNotifier>();
 builder.Services.AddHostedService<EchoAnnouncer>();
@@ -63,9 +66,28 @@ app.MapGet("/events/stream", async (HttpResponse res, EventStore store, Cancella
     }
 });
 
+// Snooze the wall for N minutes (?minutes=30). minutes=0 clears. Unauthenticated
+// like every other endpoint — trusted-LAN threat model. The button lives on
+// /mobile (the wall kiosk is deliberately cursorless).
+app.MapPost("/snooze", (int minutes, EventStore store) =>
+    Results.Json(new { snoozedUntil = store.Snooze(minutes).SnoozedUntil }));
+
 app.MapGet("/healthz", () => Results.Ok("ok"));
 
-app.MapGet("/rss", (RssCache cache) => Results.Json(cache.Items));
+app.MapGet("/rss", (RssCache cache) => Results.Json(new { news = cache.News, sports = cache.Sports }));
+
+app.MapGet("/slack/state", (SlackCache cache) =>
+{
+    var ws = cache.Workspaces;
+    return Results.Json(new
+    {
+        ok = true,
+        totalMentions = ws.Sum(w => w.Mentions),
+        anyUnread = ws.Any(w => w.AnyUnread),
+        workspaces = ws,
+        updatedAt = ws.Count > 0 ? ws.Max(w => w.UpdatedAt) : (DateTimeOffset?)null
+    });
+});
 
 app.MapGet("/hero", () =>
     Results.File(Path.Combine(app.Environment.WebRootPath, "hero.html"), "text/html"));
@@ -75,6 +97,18 @@ app.MapGet("/wall", () =>
 
 app.MapGet("/mobile", () =>
     Results.File(Path.Combine(app.Environment.WebRootPath, "mobile.html"), "text/html"));
+
+app.MapPost("/usage/report", (UsageReport report, UsageStore store) =>
+{
+    store.Upsert(report, DateTimeOffset.UtcNow);
+    return Results.Ok(new { ok = true });
+});
+
+app.MapGet("/usage/state", (UsageStore store) =>
+    Results.Json(new { accounts = store.GetState(DateTimeOffset.UtcNow) }));
+
+app.MapGet("/usage", () =>
+    Results.File(Path.Combine(app.Environment.WebRootPath, "usage.html"), "text/html"));
 
 app.Run("http://0.0.0.0:5050");
 

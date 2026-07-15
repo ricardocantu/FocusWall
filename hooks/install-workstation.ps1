@@ -16,6 +16,11 @@
     - writes  <Dir>\hook-send.ps1              (the wrapper; server URL baked in)
     - merges  %USERPROFILE%\.claude\settings.json  (adds 7 hook entries; your
               existing hooks are preserved; a timestamped .bak is kept)
+    - copies  <Dir>\usage-poll.ps1 + writes <Dir>\usage-poll.vbs and registers
+              a per-user scheduled task 'FocusWall Usage Poll' (every 5 min)
+              that reports this machine's Claude usage limits to /usage.
+              Skipped with a warning if usage-poll.ps1 is not next to this
+              installer - hooks-only installs stay single-file.
 
   The wrapper body is embedded verbatim from hooks\hook-send.ps1 (whose
   behavioural spec of record is the Unix hook-send.sh) - keep them in sync.
@@ -47,11 +52,14 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ---- defaults ---------------------------------------------------------------
-# Pi's reserved LAN IP (DHCP reservation). Preferred over focuswall.local -
-# mDNS proved unreliable across reboots on this network; see PHASE2-RUNBOOK.md section 6.
+# Default to the Pi over mDNS (focus-wall.local). If mDNS is unreliable on your
+# network, pass -Url with the Pi's LAN IP instead; see PHASE2-RUNBOOK.md section 6.
 $DefaultUrl   = 'http://focus-wall.local:5050/events'
 $SettingsPath = Join-Path $env:USERPROFILE '.claude\settings.json'
 $WrapperPath  = Join-Path $Dir 'hook-send.ps1'
+$PollDst      = Join-Path $Dir 'usage-poll.ps1'
+$ShimPath     = Join-Path $Dir 'usage-poll.vbs'
+$PollTaskName = 'FocusWall Usage Poll'
 $Events       = @('Notification','Stop','SessionStart','SessionEnd','UserPromptSubmit','PreToolUse','PostToolUse')
 
 # ---- little helpers ---------------------------------------------------------
@@ -213,6 +221,56 @@ function Write-Wrapper {
     [IO.File]::WriteAllText($WrapperPath, $content, ([Text.UTF8Encoding]::new($false)))
 }
 
+# ---- usage poller -----------------------------------------------------------
+# Copies usage-poll.ps1 alongside the wrapper, writes a WScript shim that runs
+# it fully hidden (a scheduled powershell.exe can flash a console window even
+# with -WindowStyle Hidden), and registers a per-user scheduled task: every 5
+# minutes plus at logon. No admin needed. Idempotent - files are overwritten
+# and Register-ScheduledTask -Force replaces the task in place. The URL and
+# label are baked into the shim so the task needs no environment of its own.
+# RepetitionDuration is a long finite span - [TimeSpan]::MaxValue misbehaves
+# on some Windows builds.
+$ShimTemplate = @'
+' usage-poll.vbs - installed by install-workstation.ps1.
+' Launches usage-poll.ps1 with window style 0 (fully hidden) so the
+' 5-minute scheduled task never flashes a console window.
+Set sh = CreateObject("WScript.Shell")
+Set env = sh.Environment("PROCESS")
+env("FOCUSWALL_URL") = "@@URL@@"
+env("FOCUSWALL_ACCOUNT_LABEL") = "@@LABEL@@"
+sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""@@POLL@@""", 0, False
+'@
+
+function Install-UsagePoller {
+    $src = Join-Path $PSScriptRoot 'usage-poll.ps1'
+    if (-not (Test-Path -LiteralPath $src)) {
+        Warn "usage-poll.ps1 not found next to the installer - skipping usage poller (run the installer from the repo to enable it)."
+        return
+    }
+    if (-not (Test-Path -LiteralPath $Dir)) { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
+    Copy-Item -LiteralPath $src -Destination $PollDst -Force
+
+    $label = if ($env:FOCUSWALL_ACCOUNT_LABEL) { $env:FOCUSWALL_ACCOUNT_LABEL } else { $env:COMPUTERNAME }
+    $shim  = $ShimTemplate.Replace('@@URL@@', $Url).Replace('@@LABEL@@', $label).Replace('@@POLL@@', $PollDst)
+    [IO.File]::WriteAllText($ShimPath, $shim, ([Text.UTF8Encoding]::new($false)))
+
+    try {
+        $action   = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "//B //Nologo `"$ShimPath`""
+        $every5   = New-ScheduledTaskTrigger -Once -At (Get-Date) `
+                        -RepetitionInterval (New-TimeSpan -Minutes 5) `
+                        -RepetitionDuration (New-TimeSpan -Days 3650)
+        $atLogon  = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+        $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+                        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                        -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+        Register-ScheduledTask -TaskName $PollTaskName -Action $action `
+            -Trigger @($every5, $atLogon) -Settings $settings -Force | Out-Null
+        Ok "Installed scheduled task '$PollTaskName' (every 5 min)."
+    } catch {
+        Warn "Could not register scheduled task '$PollTaskName': $($_.Exception.Message)"
+    }
+}
+
 # ---- flows ------------------------------------------------------------------
 function Do-Install {
     Say "Installing Claude Focus Wall reporting on this machine..."
@@ -233,6 +291,8 @@ function Do-Install {
 
     Write-Settings (Merge-Hooks)
     Ok "Hooks merged into $SettingsPath"
+
+    Install-UsagePoller
 
     # Non-fatal reachability check.
     try {
@@ -257,6 +317,12 @@ function Do-Uninstall {
     Say "Removing Claude Focus Wall reporting..."
     Write-Settings (Strip-Hooks)
     Ok "Removed Focus Wall hooks from $SettingsPath"
+
+    try {
+        Unregister-ScheduledTask -TaskName $PollTaskName -Confirm:$false -ErrorAction Stop
+        Ok "Removed scheduled task '$PollTaskName'"
+    } catch { }
+    Remove-Item -LiteralPath $PollDst, $ShimPath -Force -ErrorAction SilentlyContinue
 
     if (Test-Path -LiteralPath $Dir) {
         if (Confirm-Prompt "Also delete $Dir?") {

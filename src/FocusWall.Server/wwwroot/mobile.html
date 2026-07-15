@@ -21,6 +21,15 @@
     <div class="m-summary-sub" id="summary-sub"></div>
   </section>
 
+  <!-- Snooze remote: the wall kiosk is cursorless, so the phone is where you
+       silence the alert. Snooze suppresses the waiting pulse + Discord/Echo push
+       for N minutes; events still log. -->
+  <section class="m-snooze" id="snooze">
+    <button type="button" class="m-snooze-btn" data-minutes="30">Snooze 30m</button>
+    <button type="button" class="m-snooze-btn" data-minutes="60">1h</button>
+    <button type="button" class="m-snooze-btn m-snooze-clear" data-minutes="0" hidden>Clear snooze</button>
+  </section>
+
   <!-- Single-column session list. Cards reuse the grid's .card classes, so
        app.css styles + the waiting pulse apply unchanged. -->
   <section class="m-list" id="list"></section>

@@ -29,6 +29,17 @@ services:
       VOICEMONKEY_COOLDOWN_SECONDS: "120"
       VOICEMONKEY_QUIET_START: "22:00"
       VOICEMONKEY_QUIET_END: "07:30"
+      # Slack unread panel. Session token (xoxc) + d cookie per workspace, from
+      # .env (gitignored) / GH secrets. Any slot with an empty token/cookie is
+      # dropped; all empty ⇒ SlackService self-disables and the panel stays
+      # hidden. Two slots (0,1) cover the 1–2 workspace target.
+      # See SLACK_SETUP_CHECKLIST.md.
+      Slack__Workspaces__0__Label: "${SLACK_WS0_LABEL}"
+      Slack__Workspaces__0__Token: "${SLACK_WS0_TOKEN}"
+      Slack__Workspaces__0__Cookie: "${SLACK_WS0_COOKIE}"
+      Slack__Workspaces__1__Label: "${SLACK_WS1_LABEL}"
+      Slack__Workspaces__1__Token: "${SLACK_WS1_TOKEN}"
+      Slack__Workspaces__1__Cookie: "${SLACK_WS1_COOKIE}"
     healthcheck:
       # The aspnet base image ships neither wget nor curl; a bash /dev/tcp
       # connect is enough to prove the server is accepting connections.

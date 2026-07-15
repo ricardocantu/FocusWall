@@ -12,11 +12,11 @@ file, then run it with your team's wall URL:
 
 ```bash
 chmod +x install-workstation.sh
-./install-workstation.sh --url http://<pi-ip>:5050/events
+./install-workstation.sh --url http://focus-wall.local:5050/events
 ```
 
-Run it with no `--url` and it'll prompt you (default `http://<pi-ip>:5050/events`,
-the Pi's reserved LAN IP — mDNS `focuswall.local` proved unreliable across reboots).
+Run it with no `--url` and it'll prompt you (default `http://focus-wall.local:5050/events`;
+use the Pi's LAN IP if mDNS is unreliable on your network).
 That's it — new Claude Code sessions start reporting automatically. No repo
 clone, no build, nothing to keep running.
 
@@ -33,7 +33,7 @@ Windows) or PowerShell 7+ both work.
 
 ```powershell
 # From a PowerShell prompt, in the folder with the script:
-.\install-workstation.ps1 -Url http://<pi-ip>:5050/events
+.\install-workstation.ps1 -Url http://focus-wall.local:5050/events
 ```
 
 Run it with no `-Url` and it prompts you (same default). It writes the wrapper to
@@ -41,6 +41,14 @@ Run it with no `-Url` and it prompts you (same default). It writes the wrapper t
 `%USERPROFILE%\.claude\settings.json` (existing hooks preserved, timestamped
 `.bak` kept). If PowerShell blocks the script with an execution-policy error,
 launch it as `powershell -ExecutionPolicy Bypass -File .\install-workstation.ps1 …`.
+
+Run the Windows installer **from the repo's `hooks\` folder** (or keep
+`usage-poll.ps1` next to it) and it also sets up the usage poller: it copies
+`usage-poll.ps1` to `%USERPROFILE%\.focus-wall\`, writes a tiny `usage-poll.vbs`
+shim (so the run is fully window-less), and registers a per-user Scheduled Task
+named **`FocusWall Usage Poll`** (every 5 minutes, plus at logon — no admin
+needed). If `usage-poll.ps1` isn't next to the installer it warns and skips the
+poller; the hooks still install fine from the single file.
 
 Smoke-test the wrapper by hand after installing:
 
@@ -61,8 +69,36 @@ only a few milliseconds. Uninstall with `.\install-workstation.ps1 -Uninstall`.
   into it).
 - Merges 7 hook entries into `~/.claude/settings.json`. **Your existing hooks
   and settings are preserved** — a timestamped `.bak` is saved before any change.
+- Copies the usage poller to `~/.focus-wall/` and registers a scheduler that
+  runs it every 5 minutes (a launchd agent on macOS, a systemd `--user` timer
+  on Linux, a per-user Scheduled Task `FocusWall Usage Poll` on Windows).
 
 Re-run it any time to point at a different wall; it won't create duplicates.
+
+## Usage poller
+
+Alongside the hooks, the installer sets up a small poller that shows your
+Claude usage limits (5-hour / weekly session gauges) on the wall. Every 5
+minutes it reads this machine's Claude Code OAuth token (from the macOS
+Keychain, or `~/.claude/.credentials.json` on Linux and Windows), calls Anthropic's usage
+endpoint, reduces the response to just the limit gauges, and POSTs that
+summary to the wall server. **The token itself never leaves this machine** —
+only the reduced summary (percentages, reset times, which limit is active) is
+sent, the same way the hooks strip `tool_input` before sending. If no token is
+found, or Anthropic's endpoint rejects it, the poller reports a status (
+`no_token` / `auth_expired`) instead of limit data and keeps running — it never
+blocks or errors out the scheduler.
+
+By default the wall groups usage by short hostname. On a shared machine, or if
+you want a friendlier label than the hostname, set `FOCUSWALL_ACCOUNT_LABEL`
+before installing:
+
+```bash
+FOCUSWALL_ACCOUNT_LABEL="my-laptop" ./install-workstation.sh --url http://focus-wall.local:5050/events
+```
+
+Uninstalling removes the scheduler (launchd agent / systemd timer / Windows
+scheduled task) and the copied poller along with the hooks.
 
 ## What leaves your machine (and what doesn't)
 

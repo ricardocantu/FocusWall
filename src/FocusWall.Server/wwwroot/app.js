@@ -28,6 +28,7 @@ const state = {
   lastEventAt: null,
   toolCount: 0,
   editCount: 0,
+  snoozedUntil: null,     // Date when snooze ends, or null. Overlay, not a status.
 };
 
 const STATUS_COPY = {
@@ -37,7 +38,10 @@ const STATUS_COPY = {
   done:    { title: 'Done',            detail: 'Turn complete · ready for review' },
 };
 
+let lastStatus = { value: 'idle', sessions: [] };
+
 function applyStatus(s) {
+  lastStatus = s;
   state.status        = s.value;
   state.statusSince   = new Date(s.since);
   state.sessionCount  = s.sessionCount ?? 0;
@@ -47,9 +51,15 @@ function applyStatus(s) {
   const sessions = s.sessions || [];
   state.loudestSession = sessions.find(x => x.status === state.status) || null;
 
-  app.dataset.status = state.status;
+  // Snooze is an overlay: the real status/sessions stay honest, but while it's
+  // active the hero shows "Snoozed (Nm left)" instead of the waiting pulse.
+  const su = s.snoozedUntil ? new Date(s.snoozedUntil) : null;
+  state.snoozedUntil = su && su > new Date() ? su : null;
+  const snoozed = state.snoozedUntil !== null;
+
+  app.dataset.status = snoozed ? 'snoozed' : state.status;
   const copy = STATUS_COPY[state.status] || STATUS_COPY.idle;
-  heroTitle.textContent = copy.title;
+  heroTitle.textContent = snoozed ? 'Snoozed' : copy.title;
 
   // For "waiting", show the actual notification text (permission prompt vs
   // idle nudge) — the waiting session's last event is always the Notification.
@@ -61,7 +71,9 @@ function applyStatus(s) {
 
   // Prefer cwd of loudest session (e.g., "my-project") for the detail line
   const cwd = state.loudestSession?.cwd;
-  heroDetail.textContent = cwd ? `${detail} · ${cwd}` : detail;
+  // While snoozed the detail is the countdown (kept fresh by tickClocks); paint
+  // it now so there's no blank frame before the first tick.
+  heroDetail.textContent = snoozed ? snoozeLeftText() : (cwd ? `${detail} · ${cwd}` : detail);
 
   // Fleet summary line
   if (state.sessionCount === 0) {
@@ -78,6 +90,13 @@ function applyStatus(s) {
   mSessions.textContent = state.sessionCount;
 
   renderStrip(sessions, state.loudestSession);
+}
+
+function snoozeLeftText() {
+  if (!state.snoozedUntil) return '';
+  const left = Math.floor((state.snoozedUntil - Date.now()) / 1000);
+  const m = Math.floor(left / 60);
+  return m >= 1 ? `${m}m left` : `${Math.max(left, 0)}s left`;
 }
 
 function fmtSince(iso) {
@@ -99,7 +118,6 @@ function renderStrip(sessions, loudest) {
 
   if (others.length === 0) {
     strip.hidden = true;
-    app.classList.remove('has-strip');
     return;
   }
 
@@ -137,7 +155,6 @@ function renderStrip(sessions, loudest) {
   }
 
   strip.hidden = false;
-  app.classList.add('has-strip');
 }
 
 function deriveDetail(ev) {
@@ -204,6 +221,19 @@ function tickClocks() {
     mLast.textContent = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m`;
   }
 
+  // Snooze countdown self-corrects locally: when it lapses, drop the overlay
+  // even before the server's next heartbeat rebroadcast catches up.
+  if (state.snoozedUntil) {
+    const left = Math.floor((state.snoozedUntil - now) / 1000);
+    if (left <= 0) {
+      // Re-derive the hero from the real status (server rebroadcast will follow).
+      state.snoozedUntil = null;
+      applyStatus(lastStatus);
+    } else {
+      heroDetail.textContent = snoozeLeftText();
+    }
+  }
+
   if (state.status === 'waiting' || state.status === 'done') {
     const secs = Math.floor((now - state.statusSince) / 1000);
     heroSince.textContent = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
@@ -234,3 +264,106 @@ connectStream({
   onStatus: applyStatus,
   onEvent: addEvent,
 });
+
+// ── Slack panel ──────────────────────────────────────────────────────────────
+// Polls same-origin /slack/state (server calls Slack, not the browser). One
+// labeled sub-block per configured account: presence + category unread rows +
+// custom status. Config/Slack-derived text → textContent only. Panel hides
+// entirely when no workspace is configured (self-disabled server-side).
+const slackPanel    = document.getElementById('slack-panel');
+const slackAccounts = document.getElementById('slack-accounts');
+
+const PRESENCE = {
+  active: { cls: 'active', label: 'Active' },
+  away:   { cls: 'away',   label: 'Away' },
+};
+
+function slackCount(n) { return n > 0 ? String(n) : '—'; }
+
+function slackBlock(w) {
+  const block = document.createElement('div');
+  block.className = 'slack-block';
+
+  const head = document.createElement('div');
+  head.className = 'slack-head';
+  const label = document.createElement('span');
+  label.className = 'slack-label';
+  label.textContent = w.label || 'Slack';
+  const pres = document.createElement('span');
+  pres.className = 'slack-presence';
+  if (w.error) {
+    pres.textContent = 'reconnect';
+    pres.classList.add('warn');
+  } else if (PRESENCE[w.presence]) {
+    pres.textContent = PRESENCE[w.presence].label;
+    pres.classList.add(PRESENCE[w.presence].cls);
+  }
+  head.append(label, pres);
+  block.append(head);
+
+  if (w.error) return block;   // counts are 0/unknown on error — show only the header
+
+  const rows = document.createElement('div');
+  rows.className = 'slack-rows';
+  for (const [name, val] of [
+    ['Mentions', w.channelMentions],
+    ['Channels', w.channelsUnread],
+    ['DMs',      w.dmMentions],
+    ['Threads',  w.threadsUnread],
+  ]) {
+    const row = document.createElement('div');
+    row.className = 'slack-row' + (val > 0 ? ' has' : '');
+    const n = document.createElement('span');
+    n.className = 'slack-row-name';
+    n.textContent = name;
+    const c = document.createElement('span');
+    c.className = 'slack-row-count';
+    c.textContent = slackCount(val);
+    row.append(n, c);
+    rows.append(row);
+  }
+  block.append(rows);
+
+  if (w.statusText) {
+    const st = document.createElement('div');
+    st.className = 'slack-status';
+    st.textContent = w.statusText;
+    block.append(st);
+  }
+  return block;
+}
+
+function renderSlack(data) {
+  const ws = data?.workspaces || [];
+  if (ws.length === 0) { slackPanel.hidden = true; return; }
+  slackPanel.hidden = false;
+  // Pulse the whole panel (like the waiting hero) when something is directed at
+  // you — mentions + unread DMs, the server's totalMentions aggregate.
+  slackPanel.classList.toggle('alert', (data.totalMentions || 0) > 0);
+  slackAccounts.replaceChildren();
+  for (const w of ws) slackAccounts.append(slackBlock(w));
+}
+
+async function refreshSlack() {
+  try {
+    const res = await fetch('/slack/state');
+    if (!res.ok) throw new Error(String(res.status));
+    renderSlack(await res.json());
+  } catch { /* keep last render on transient failure */ }
+}
+refreshSlack();
+setInterval(refreshSlack, 30000);
+
+// ── Bottom-band crossfade ────────────────────────────────────────────────────
+// Rotates metrics → recent events → usage in place. The usage panel is fed by
+// usage.js (it refreshes #usage-accounts on its own). ?rotate=<secs> overrides.
+const bandPanels = [...document.querySelectorAll('.band-panel')];
+if (bandPanels.length > 1) {
+  const bandSecs = parseInt(new URLSearchParams(location.search).get('rotate'), 10) || 15;
+  let bandIdx = 0;
+  setInterval(() => {
+    bandPanels[bandIdx].classList.remove('active');
+    bandIdx = (bandIdx + 1) % bandPanels.length;
+    bandPanels[bandIdx].classList.add('active');
+  }, bandSecs * 1000);
+}

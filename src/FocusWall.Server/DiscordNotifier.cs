@@ -51,6 +51,15 @@ public class DiscordNotifier(
                     if (_lastNotifiedStatus.TryGetValue(session.Key, out var prev) && prev == "waiting")
                         continue;
 
+                    if (global.SnoozedUntil > DateTimeOffset.UtcNow)
+                    {
+                        // Mark as notified so it doesn't back-fire the instant
+                        // snooze ends — same bookkeeping as quiet hours.
+                        log.LogInformation("Suppressed (snoozed) for {Session}", session.Key.Short);
+                        _lastNotifiedStatus[session.Key] = "waiting";
+                        continue;
+                    }
+
                     if (IsQuietHours())
                     {
                         log.LogInformation("Suppressed (quiet hours) for {Session}", session.Key.Short);

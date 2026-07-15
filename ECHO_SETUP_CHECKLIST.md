@@ -34,7 +34,7 @@ curl "https://api-utility.voicemonkey.io/v2/announcement?token=YOUR_TOKEN&device
 
 ## 5. End-to-end check
 ```bash
-curl -X POST http://<pi-ip>:5050/events \
+curl -X POST http://focus-wall.local:5050/events \
   -H 'Content-Type: application/json' \
   -d '{"hook_event_name":"Notification","message":"Permission requested for Edit"}'
 ```

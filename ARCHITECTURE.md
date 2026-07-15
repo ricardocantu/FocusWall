@@ -41,19 +41,26 @@ flowchart TB
 
 ### What each component does
 
-**Claude Code CLI** — Runs on your workstation. You don't modify it. It fires hooks at lifecycle events (Notification, Stop, PreToolUse, PostToolUse, SessionStart, SessionEnd). Hook payloads arrive on the hook's stdin as JSON.
+**Claude Code CLI** — Runs on your workstation. You don't modify it. It fires hooks at lifecycle events (Notification, Stop, PreToolUse, PostToolUse, UserPromptSubmit, SessionStart, SessionEnd). Hook payloads arrive on the hook's stdin as JSON.
 
 **hook-send.sh wrapper** — A 10-line bash script. Reads the JSON from stdin, injects `hostname` and `cwd` fields, POSTs the result to the server. Living in shell instead of inline curl means you can change the URL or add fields in one place.
 
-**FocusWall.Server** — A small ASP.NET minimal API. Three responsibilities: receive events, hold short-term state, broadcast to subscribers. About 200 lines of C# total.
+**FocusWall.Server** — A small ASP.NET minimal API. Its core is three responsibilities: receive events, hold short-term state, broadcast to subscribers (the `EventStore` + SSE path). Around that core sit optional background services (RSS ticker, Slack panel, usage store, Discord/Echo notifiers), so the whole server is now ~1,200 lines of C# across a dozen files — still small, still no framework beyond ASP.NET.
 
-**Dashboard SPA** — One HTML file, one JS file, one CSS file. Subscribes to the SSE stream with `EventSource`, renders the hero status and event log. No framework — vanilla JS is plenty for this surface area.
+**Dashboard views** — Multiple vanilla-JS views sharing one connection module (`sse.js`) and common CSS: the per-session grid (`/`), the composed hero (`/hero`), the kiosk wall (`/wall`), the phone-optimized mobile view (`/mobile`), and the usage page (`/usage`). Each subscribes to the SSE stream with `EventSource` and renders a fixed set of DOM nodes. No framework — vanilla JS is plenty for this surface area. (This started as a single HTML/JS/CSS page; the views were split out as features landed.)
 
-**Chromium kiosk** — Chromium browser running fullscreen with no chrome (toolbars, tabs, address bar) on the Pi. Points at `http://localhost:5050/`. Autorestarts on Pi boot.
+**Chromium kiosk** — Chromium browser running fullscreen with no chrome (toolbars, tabs, address bar) on the Pi. Points at `http://localhost:5050/wall?kiosk=1`. Autorestarts on Pi boot.
 
 **Optional Echo Show announcer** — A background service in the same server. On status transitions to `waiting`, it hits the Voice Monkey webhook, which makes an Echo Show speak the alert out loud. Pure audio backstop for when you're not in sight of the wall. See `ECHO_SHOW.md` for setup.
 
 **Optional Discord notifier** — Another background service in the same server, structurally identical to the Echo Show announcer. On status transitions to `waiting`, it POSTs a rich embed to a Discord webhook, which fires a push notification on your phone via the Discord app. Reaches you anywhere with signal. See `DISCORD.md` for setup.
+
+**Later additions (optional, all self-disabling when unconfigured)** — Several more subsystems bolted onto the same server after the core wall shipped. This doc predates them and treats them as detail rather than architecture; the design notes live in `CLAUDE.md` and each feature's setup checklist:
+
+- **RSS ticker** (`RssService` + `RssParser`) — polls configured public feeds and serves `GET /rss`, which the `/wall` view renders as the top (news) and bottom (sports) tickers.
+- **Slack panel** (`SlackService` + the pure `SlackCounts`/`SlackProfile` reducers) — polls Slack's internal `client.counts` per workspace and serves `GET /slack/state` for the hero's per-account unread panel.
+- **Usage limits** (`UsageStore` + the workstation `usage-poll` scripts) — per-machine pollers POST subscription-limit summaries to `POST /usage/report`; `GET /usage/state` feeds the `/usage` page.
+- **Snooze** — a global presentation overlay (`POST /snooze`), not a state-machine transition; per-session state stays honest while the banners and notifiers suppress the waiting alert.
 
 ## Data flow — event lifecycle
 
@@ -246,7 +253,7 @@ These are the choices and why they were made. If you want to swap one, this is w
 
 ### ASP.NET minimal API for the server
 
-**Why:** You live in `.NET`-land daily. The whole server is around 200 lines and `dotnet publish` produces a single self-contained binary that runs anywhere. AOT compilation gives a ~10MB native binary if size matters on the Pi.
+**Why:** You live in `.NET`-land daily. The core event/SSE path is small, and even with the optional background services bolted on the whole server is ~1,200 lines; `dotnet publish` produces a single self-contained binary that runs anywhere. AOT compilation gives a ~10MB native binary if size matters on the Pi.
 
 **Alternative considered:** Node.js / Python FastAPI. Both fine. Stay with what you know unless you have a reason.
 
@@ -254,7 +261,7 @@ These are the choices and why they were made. If you want to swap one, this is w
 
 **Why:** SSE is built into browsers (`EventSource`), survives proxy hops better, auto-reconnects, and the traffic is one-way (server → dashboard) which is exactly what SSE is for. WebSockets add complexity (heartbeats, frames, libraries) for no benefit here.
 
-**When you'd want WebSockets instead:** If the dashboard needs to send things to the server (snooze button being a good example). At that point either upgrade to WS or just add a `POST /snooze` endpoint — the latter is simpler.
+**When you'd want WebSockets instead:** If the dashboard needs to send things to the server (the snooze button was the first example). Rather than upgrade to WS, that shipped as a plain `POST /snooze` endpoint — the simpler path, and the one this codebase took.
 
 ### In-memory ring buffer (no DB by default)
 
@@ -266,7 +273,7 @@ These are the choices and why they were made. If you want to swap one, this is w
 
 **Why:** The dashboard updates a fixed set of DOM nodes when events arrive. There's no routing, no state library, no build step. A framework would be more code than the app itself.
 
-**When you'd want a framework:** When you start adding interactive features (snooze, filter, per-host tabs). Even then, Alpine.js or HTMX gets you there without a build pipeline. React only if you genuinely want a SPA.
+**When you'd want a framework:** When you start adding interactive features (filter, per-host tabs). The snooze control shipped as a couple of buttons posting to `/snooze` with no framework at all — evidence the bar for reaching for one is high. Even then, Alpine.js or HTMX gets you there without a build pipeline. React only if you genuinely want a SPA.
 
 ### Docker on the Pi
 

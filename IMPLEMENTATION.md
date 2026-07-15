@@ -6,33 +6,66 @@ Concrete build steps and all code. Follow top to bottom. Every code block is mea
 
 ```
 focus-wall/
-├── README.md
+├── README.md                   # + other guides: ARCHITECTURE, IMPLEMENTATION (this file),
+│                               #   GETTING_STARTED, DEPLOYMENT, HARDWARE, PHASE2-RUNBOOK,
+│                               #   DISCORD, ECHO_SHOW, and the *_SETUP_CHECKLIST files
 ├── docker-compose.yml
 ├── .github/
+│   ├── dependabot.yml
 │   └── workflows/
-│       └── deploy.yml
+│       └── deploy.yml.example  # inert sample; rename to deploy.yml to activate (Phase 2b)
 ├── src/
 │   └── FocusWall.Server/
 │       ├── FocusWall.Server.csproj
 │       ├── Program.cs
 │       ├── EventStore.cs
 │       ├── HeartbeatService.cs
+│       ├── RssService.cs        # RSS ticker background service
+│       ├── RssParser.cs         # pure RSS/Atom parser (unit-tested)
+│       ├── SlackService.cs      # Slack panel background service
+│       ├── SlackCounts.cs       # pure client.counts reducer (unit-tested)
+│       ├── SlackProfile.cs      # pure presence/status parser (unit-tested)
+│       ├── UsageStore.cs        # per-host usage-limit summaries
+│       ├── DiscordNotifier.cs   # optional Discord webhook (see DISCORD.md)
+│       ├── EchoAnnouncer.cs     # optional Voice Monkey / Echo Show (see ECHO_SHOW.md)
+│       ├── appsettings.json     # RSS feeds + Slack workspace config
 │       ├── Dockerfile
 │       └── wwwroot/
 │           ├── index.html      # grid view (home /)
-│           ├── hero.html       # hero view (/hero)
-│           ├── sse.js          # shared EventSource/reconnect/kiosk module
 │           ├── grid.js         # per-session cards (grid view)
+│           ├── hero.html       # hero view (/hero)
 │           ├── app.js          # hero logic (hero view)
-│           └── app.css         # shared styles
+│           ├── app.css         # shared styles
+│           ├── sse.js          # shared EventSource/reconnect/kiosk module
+│           ├── wall.html       # kiosk wall (/wall) — RSS tickers + hero iframe
+│           ├── wall.js
+│           ├── mobile.html     # phone view (/mobile) — hosts the snooze control
+│           ├── mobile.js
+│           ├── mobile.css
+│           ├── usage.html      # usage limits page (/usage)
+│           ├── usage.js
+│           └── usage.css
 ├── hooks/
-│   ├── hook-send.sh
-│   └── settings.example.json
+│   ├── hook-send.sh            # hook wrapper (macOS/Linux)
+│   ├── hook-send.ps1           # hook wrapper (Windows)
+│   ├── install-workstation.sh  # workstation installer (macOS/Linux)
+│   ├── install-workstation.ps1 # workstation installer (Windows)
+│   ├── usage-poll.sh           # usage poller (macOS/Linux)
+│   ├── usage-poll.ps1          # usage poller (Windows)
+│   ├── settings.example.json
+│   └── README.md
 └── tests/
     └── FocusWall.Server.Tests/
         ├── FocusWall.Server.Tests.csproj
-        └── EventStoreTests.cs
+        ├── EventStoreTests.cs
+        ├── RssParserTests.cs
+        ├── SlackCountsTests.cs
+        ├── SlackProfileTests.cs
+        ├── SnoozeTests.cs
+        └── UsageStoreTests.cs
 ```
+
+> **Scope of this document.** The build steps below cover the core wall (event server + SSE + the grid/hero/wall views) and the RSS ticker. Four features shipped *after* this doc and are **not** transcribed here: the **Slack panel** (`SlackService`/`SlackCounts`/`SlackProfile` + `/slack/state`), the **usage limits** page and pollers (`UsageStore` + `usage-poll.*` + `/usage`), **snooze** (`POST /snooze`), and the **mobile** view (`/mobile`). Their design notes live in `CLAUDE.md`; the Discord and Echo channels are specified in `DISCORD.md` / `ECHO_SHOW.md`, and the turn-on steps in the `*_SETUP_CHECKLIST.md` files. Treat the code in `src/` as authoritative for those.
 
 ## Phase 1 — project bootstrap
 
@@ -436,8 +469,10 @@ public class HeartbeatService(EventStore store) : BackgroundService
 
 ## Phase 1 — frontend
 
-The frontend is now three views sharing common CSS and a connection module,
-not a single page. `GET /` serves the **grid** view — `wwwroot/index.html`
+The frontend is a set of views sharing common CSS and a connection module,
+not a single page. This section builds the first three — grid, hero, and
+wall; the `/mobile` and `/usage` views shipped later (see the scope note
+above) and follow the same pattern. `GET /` serves the **grid** view — `wwwroot/index.html`
 loading `wwwroot/grid.js` — via `app.UseDefaultFiles()`/`UseStaticFiles()`
 in `Program.cs` (static-files middleware treats `index.html` as the default
 document for `/`). `GET /hero` is mapped explicitly in `Program.cs`
@@ -681,21 +716,30 @@ setInterval(refreshTicker, 5 * 60 * 1000);
 
 ### RSS ticker
 
-The `/rss` endpoint returns a JSON array of merged feed items from all configured
-sources in `appsettings.json` → `Rss:Feeds`. The `RssService` background service
-fetches feeds on a configurable interval (`Rss:RefreshMinutes`, default 10 minutes)
-and merges them newest-first, capping at `Rss:MaxItems` (default 30 items). If a
-feed fails to fetch or parse, it is skipped — the ticker never blanks.
+The `/rss` endpoint returns `{ "news": [...], "sports": [...] }` — two independently
+merged lists, one per ticker row (`/wall` renders news along the top, sports along
+the bottom). Each list's sources are configured in `appsettings.json` →
+`Rss:NewsFeeds` / `Rss:SportsFeeds`. The `RssService` background service fetches
+both groups on a configurable interval (`Rss:RefreshMinutes`, default 10 minutes)
+and merges each group's feeds newest-first, capping at `Rss:MaxItems` **per row**
+(default 30). Items are tagged with a short source label (host minus common
+`www.`/`feeds.`/`rss.`/`feed.`/`search.` prefixes) and carry `publishedAt` for the
+client date stamp. If a feed fails to fetch or parse, it is skipped — the ticker
+never blanks. The JSON config provider tolerates `//` comments, so each feed can be
+labelled inline.
 
 **Configuration in `appsettings.json`:**
 ```json
 "Rss": {
-  "Feeds": [
-    "https://hnrss.org/frontpage",
-    "https://lobste.rs/rss"
+  "NewsFeeds": [
+    "https://feeds.bbci.co.uk/news/rss.xml",  // BBC — Top News
+    "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"  // NYT — Top Stories
+  ],
+  "SportsFeeds": [
+    "https://www.espn.com/espn/rss/news"  // ESPN — Top Sports
   ],
   "RefreshMinutes": 10,
-  "MaxItems": 30
+  "MaxItems": 40
 }
 ```
 
@@ -1453,7 +1497,9 @@ services:
 
 Builds and deploys automatically on every push to `main`, using a self-hosted GitHub Actions runner living on the Pi itself. No registry, no inbound network access — the runner connects outbound to GitHub and pulls jobs. **Requires the repo to be private** (see `DEPLOYMENT.md` § 4a for why, and for runner setup). This replaces the manual `git pull && docker compose up -d --build` SSH step for anyone using it; it's optional — the manual paths below still work without it.
 
-> **Not shipped in this repository.** The workflow below is reference-only — the live `.github/workflows/deploy.yml` file was deliberately omitted so this repo is safe to publish. Copy it into a **private** fork only if you want the auto-deploy path.
+The deploy is **health-gated with auto-recovery**: after the cached build it polls `/healthz` for 60s; if the container isn't serving (e.g. a corrupt build-cache layer shipped a broken image) it rebuilds once with `--no-cache` and re-checks. Only when the server is confirmed healthy does it reload the kiosk (`pkill` Chromium → labwc respawns it on the fresh page); if it's still unhealthy the job fails loudly and the kiosk step is skipped, so a broken deploy leaves the **last good page** on the wall. A final `if: always()` step prunes the build cache (≤2GB) + dangling images. Optional-channel secrets are injected here as env vars from GitHub Actions **repository secrets** (`${{ secrets.* }}`), which `docker-compose.yml` interpolates into the container; an unset secret just disables that channel.
+
+The committed copy of this file ships as an inert sample — `.github/workflows/deploy.yml.example` (GitHub only runs `.yml`/`.yaml` files, so the sample never triggers). Rename it to `deploy.yml` to activate.
 
 ```yaml
 name: Deploy to Pi
@@ -1469,18 +1515,67 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # actions/checkout defaults to `git clean -ffdx` before checkout,
-          # which would delete the runner's untracked .env file (holds
-          # VOICEMONKEY_TOKEN / DISCORD_WEBHOOK_URL if Phase 6 is in use).
+          # which would delete the runner's untracked .env file (the local
+          # fallback for VOICEMONKEY_TOKEN / DISCORD_WEBHOOK_URL / SLACK_WS*).
           clean: false
 
-      - name: Build and deploy
-        run: docker compose up -d --build
+      - name: Build, deploy, and health-check (auto-recover on failure)
+        # Cached build for speed, then GATE on /healthz: if the container isn't
+        # serving within 60s, rebuild once with --no-cache to bypass a poisoned
+        # cache. If it is STILL unhealthy, FAIL without reloading the kiosk, so
+        # the wall keeps showing the last good page.
+        run: |
+          healthy() {
+            for i in $(seq 1 60); do
+              curl -sf http://localhost:5050/healthz > /dev/null 2>&1 && return 0
+              sleep 1
+            done
+            return 1
+          }
 
-      - name: Remove dangling images
-        run: docker image prune -f
+          docker compose up -d --build || { echo "::error::cached build/up failed"; exit 1; }
+          if healthy; then echo "Healthy after cached build."; exit 0; fi
+
+          echo "::warning::Unhealthy after cached build — rebuilding with --no-cache."
+          docker compose build --no-cache || { echo "::error::--no-cache build failed"; exit 1; }
+          docker compose up -d || { echo "::error::up after --no-cache failed"; exit 1; }
+          if healthy; then echo "Healthy after clean --no-cache rebuild."; exit 0; fi
+
+          echo "::error::Still unhealthy after clean rebuild — NOT reloading kiosk. Recent state:"
+          docker compose ps || true
+          docker compose logs --tail 50 focus-wall 2>&1 || true
+          exit 1
+        env:
+          # Repository secrets (Settings → Secrets and variables → Actions),
+          # masked in logs. docker compose reads them for the ${VAR}
+          # interpolation in docker-compose.yml. Unset → that notifier/panel
+          # self-disables. The gitignored .env is the local/manual fallback.
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          VOICEMONKEY_TOKEN: ${{ secrets.VOICEMONKEY_TOKEN }}
+          VOICEMONKEY_DEVICE: ${{ secrets.VOICEMONKEY_DEVICE }}
+          SLACK_WS0_LABEL: ${{ secrets.SLACK_WS0_LABEL }}
+          SLACK_WS0_TOKEN: ${{ secrets.SLACK_WS0_TOKEN }}
+          SLACK_WS0_COOKIE: ${{ secrets.SLACK_WS0_COOKIE }}
+          SLACK_WS1_LABEL: ${{ secrets.SLACK_WS1_LABEL }}
+          SLACK_WS1_TOKEN: ${{ secrets.SLACK_WS1_TOKEN }}
+          SLACK_WS1_COOKIE: ${{ secrets.SLACK_WS1_COOKIE }}
+
+      - name: Reload kiosk browser
+        # Only reached when the server is CONFIRMED healthy. labwc's autostart
+        # respawn loop relaunches Chromium on the fresh /wall page. We do NOT
+        # reboot: the runner *is* this Pi, so `reboot` would kill the job.
+        run: pkill -f 'chromium.*--kiosk' || true
+
+      - name: Prune build cache and dangling images
+        # Always run — even after a failed deploy — so a poisoned/oversized
+        # cache can't persist. Keep up to 2GB so normal deploys stay fast.
+        if: always()
+        run: |
+          docker builder prune -f --keep-storage=2GB || docker builder prune -f || true
+          docker image prune -f || true
 ```
 
-The first deploy that needs Phase 6 env vars requires a `.env` file to already exist once in the runner's checkout directory (`~/actions-runner/_work/<repo>/<repo>/.env` by default) — `clean: false` is what lets it survive every subsequent push. If you're not using Phase 6 yet, skip this; the compose file's `environment:` block reads unset vars as empty and the notifiers just stay disabled.
+Secrets turn-on is documented per channel in the `*_SETUP_CHECKLIST.md` files; the local `.env` fallback (kept across deploys by `clean: false`) is described in `DEPLOYMENT.md` § 4a step 6. If you're not using any optional channel, skip all of it — the compose file's `environment:` block reads unset vars as empty and the notifiers/panel just stay disabled.
 
 ### Build for the Pi manually (fallback, no CI)
 
@@ -1510,17 +1605,16 @@ docker compose logs -f focus-wall
 
 Verify from your workstation: `curl http://focus-wall.local:5050/healthz` should return `ok`.
 
-## Phase 4 — polish
+## Phase 4 — polish checklist
 
-Small touches that turn the MVP into something genuinely useful — all shipping in the code above:
+These are the small things that turn the MVP into something genuinely useful.
 
-- **Hero status font scales with the viewport** via `clamp()` in CSS.
-- **Cursor hidden in kiosk mode** via the `?kiosk=1` URL param in `sse.js` (`initKioskCursor()`, shared by both views) — the reliable mechanism on the Pi, since `unclutter` is X11-only and does nothing under Bookworm's Wayland session.
-- **Dead-connection banner is unmissable** — a pulse animation on `.conn.dead`.
-- **Auto-refresh if SSE has been silent for >2 minutes** — the watchdog in `sse.js`, since Chromium occasionally locks up.
-- **`Cache-Control: no-store` on static assets** so a kiosk redeploy never serves stale files.
-
-Once it's on the wall, confirm the status is readable from your actual seat — the "readable at 10 feet" check only works in situ.
+- [ ] Hero status font scales with viewport — already done via `clamp()` in CSS
+- [x] Hide cursor in kiosk mode — done via the `?kiosk=1` URL param in `sse.js` (`initKioskCursor()`, shared by both views). This is the reliable mechanism on the Pi: `unclutter` is X11-only and does nothing under Bookworm's Wayland session
+- [ ] Connection banner is unmissable when dead — pulse animation on `.conn.dead`
+- [ ] Auto-refresh page if SSE has been dead for >2 minutes (Chromium occasionally locks up)
+- [ ] `Cache-Control: no-store` on `index.html`, `app.js`, `app.css` during development; long cache once stable
+- [ ] Test the wall view from your actual seat — the test for "readable at 10 feet" only works in situ
 
 ## Testing approach
 

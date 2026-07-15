@@ -50,12 +50,19 @@ main {
 [data-status="working"] .hero { border-color: var(--working); }
 [data-status="done"] .hero { border-color: var(--done); }
 [data-status="done"] .hero-title { color: var(--done); }
+/* Snoozed: deliberately calm — dimmed, no pulse — so a snoozed wall reads as
+   "handled" at a glance and can't be mistaken for an active waiting alert. */
+[data-status="snoozed"] .hero { border-color: var(--idle); }
+[data-status="snoozed"] .hero-title { color: var(--fg-dim); }
 
 /* Mini session strip (hero.html) — compact status of the sessions the hero
    isn't already featuring. Hidden entirely when there are none, so the
    single-session hero is unchanged. When shown, main grows a 5th row for it. */
-main.has-strip { grid-template-rows: auto auto auto auto 1fr; }
 .sessions-strip { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* display:flex above overrides the UA [hidden]{display:none}, so re-hide
+   explicitly when there are no other sessions (else an empty "Other sessions"
+   header shows on the idle wall). */
+.sessions-strip[hidden] { display: none; }
 .strip-title { color: var(--fg-dim); font-size: 13px; letter-spacing: .5px; }
 .strip-cards { display: flex; flex-wrap: wrap; gap: 14px; min-width: 0; }
 .mini {
@@ -64,13 +71,13 @@ main.has-strip { grid-template-rows: auto auto auto auto 1fr; }
   padding: 12px 16px;
   border-left: 5px solid var(--idle);
   display: flex; flex-direction: column; gap: 6px;
-  flex: 0 1 220px; min-width: 170px; max-width: 320px;
+  flex: 0 1 300px; min-width: 240px; max-width: 420px;
   transition: border-color .3s, background .3s;
 }
 .mini-status { display: flex; align-items: center; gap: 8px; }
 .mini-status .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--idle); }
 .mini-status .word { font-size: 15px; font-weight: 500; color: var(--fg-dim); }
-.mini-project { font-size: 22px; font-weight: 500; line-height: 1;
+.mini-project { font-size: 28px; font-weight: 500; line-height: 1;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mini-foot { display: flex; gap: 8px; align-items: baseline; justify-content: space-between;
   color: var(--fg-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -198,13 +205,86 @@ body.wall-page { display: flex; flex-direction: column; height: 100vh; overflow:
   border-bottom: 1px solid var(--border); background: var(--bg-elev);
   padding: 10px 0;
 }
+/* Bottom (sports) row: border on top instead of bottom, and scroll the
+   opposite direction so the two rows read as distinct at a glance. */
+.ticker--bottom { border-bottom: 0; border-top: 1px solid var(--border); }
+.ticker--bottom .ticker-src { color: var(--done); }
 .ticker-track { display: inline-block; }
 .ticker-track.scrolling { animation: ticker-scroll 90s linear infinite; }
+.ticker--bottom .ticker-track.scrolling { animation-direction: reverse; }
 .ticker-item { display: inline-block; margin-right: 3rem;
-  color: var(--fg-dim); font-size: clamp(15px, 1.6vw, 20px); }
+  color: var(--fg-dim); font-size: clamp(20px, 2.2vw, 30px); }
 .ticker-src { color: var(--working); font-weight: 600; margin-right: .5rem;
   text-transform: uppercase; letter-spacing: .03em; font-size: .85em; }
+.ticker-date { color: var(--idle); margin-right: .5rem; font-size: .85em;
+  font-variant-numeric: tabular-nums; }
 @keyframes ticker-scroll {
   from { transform: translateX(0); }
   to   { transform: translateX(-50%); }
 }
+
+/* --- Composed dashboard (hero.html) --- */
+.dash-row {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 2vw;
+  min-height: 0;
+}
+.dash-row .hero { grid-column: 1 / 10; margin: 0; }
+.dash-row:has(.slack-panel[hidden]) .hero { grid-column: 1 / 13; }
+.slack-panel {
+  grid-column: 10 / 13;
+  background: var(--bg-elev);
+  border: 1px solid transparent;   /* baseline so the alert border doesn't shift layout */
+  border-radius: 16px;
+  padding: 2.2vh 1.4vw;
+  display: flex; flex-direction: column; gap: 12px;
+  min-width: 0; overflow: hidden;
+}
+.slack-panel[hidden] { display: none; }
+/* Pulse the whole panel amber — like the waiting hero — when something is
+   directed at you (an @-mention or an unread DM, i.e. totalMentions > 0). */
+.slack-panel.alert {
+  border-color: var(--waiting);
+  animation: waitpulse 2s ease-in-out infinite;
+}
+.slack-panel-title { color: var(--fg-dim); font-size: 13px; letter-spacing: .5px; text-transform: uppercase; }
+.slack-accounts { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow: hidden; }
+
+.slack-block { display: flex; flex-direction: column; gap: 8px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.slack-block:last-child { border-bottom: 0; padding-bottom: 0; }
+.slack-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.slack-label { font-size: clamp(16px, 1.6vw, 22px); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slack-presence { font-size: clamp(13px, 1.2vw, 17px); color: var(--fg-dim); flex: 0 0 auto; }
+.slack-presence.active { color: var(--done); }
+.slack-presence.away { color: var(--fg-dim); }
+.slack-presence.warn { color: var(--waiting); }
+
+.slack-rows { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+.slack-row { display: flex; align-items: baseline; justify-content: space-between; gap: 6px;
+  font-size: clamp(14px, 1.3vw, 19px); color: var(--fg-dim); }
+.slack-row-count { font-variant-numeric: tabular-nums; color: var(--fg-faint); }
+.slack-row.has { color: var(--fg); }
+.slack-row.has .slack-row-count { color: var(--waiting); font-weight: 600; }
+.slack-status { font-size: clamp(13px, 1.2vw, 17px); color: var(--fg-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Bottom band — three panels stacked; only .active is shown (crossfade). */
+/* Pin to the flexible 4th row explicitly: the sessions strip (row 3) is
+   display:none when there are 0-1 sessions, which would otherwise let the band
+   auto-place into an `auto` track and collapse to 0px (all panels are
+   position:absolute). grid-row:4 keeps it in the 1fr track in every case. */
+.bottom-band { position: relative; min-height: 0; grid-row: 4; }
+.band-panel {
+  position: absolute; inset: 0;
+  opacity: 0; pointer-events: none;
+  transition: opacity .6s ease;
+  display: flex; flex-direction: column; min-height: 0;
+}
+.band-panel.active { opacity: 1; pointer-events: auto; }
+.band-panel > .log, .band-panel > .metrics { flex: 1 1 auto; min-height: 0; }
+.band-panel > .metrics { align-content: start; }
+#panel-usage { overflow-y: auto; }
+.band-usage-title { padding: 4px 2px 0; }

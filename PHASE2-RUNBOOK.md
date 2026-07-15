@@ -12,7 +12,7 @@ of `DEPLOYMENT.md` — follow it top to bottom, and jump to the referenced
 | Pi hostname | `focus-wall` (→ `focus-wall.local` over mDNS) |
 | Repo | `<you>/<repo>` (private ✓ — required for the runner) |
 | Runner label | `focus-wall-pi` (must match the workflow's `runs-on`) |
-| Timezone | `Etc/UTC` (already set in `docker-compose.yml`) |
+| Timezone | `Etc/UTC` (set yours in `docker-compose.yml`) |
 
 Replace `<user>` with the Pi username you set when flashing.
 
@@ -26,7 +26,7 @@ deploy (it deploys whatever it checks out):
 - `src/FocusWall.Server/Dockerfile`
 - `docker-compose.yml`
 - `src/FocusWall.Server/.dockerignore`
-- `.github/workflows/deploy.yml`  ← the runner literally can't run a workflow it can't see. **This repo doesn't ship it** (it's omitted so the repo is safe to publish); copy it from `IMPLEMENTATION.md` § "Phase 2 — containerize" into a **private** fork if you want the runner path.
+- `.github/workflows/deploy.yml`  ← the runner literally can't run a workflow it can't see
 
 Stage, commit, and push these to `main` at some point before **Step 5**.
 (Git operations are done by hand in this project — nothing in this runbook runs
@@ -47,7 +47,7 @@ for the kiosk browser). Click the gear icon for OS customization:
 - Hostname: `focus-wall`
 - Username / password: your choice (avoid the default `pi`/`raspberry`)
 - Wi-Fi credentials
-- Locale / timezone: `Etc/UTC` / keyboard layout
+- Locale / timezone: your locale / keyboard layout
 - **Enable SSH** (password auth is fine for now)
 
 Write the card, boot the Pi. First boot ~2 min.
@@ -126,12 +126,12 @@ env var — e.g. an `"env"` block in `~/.claude/settings.json`, which hook
 subprocesses inherit). Run a real Claude Code session and confirm events arrive
 on the Pi-hosted dashboard.
 
-> **Use a reserved IP, not `.local`.** On this build, `focuswall.local` (mDNS)
+> **Use a reserved IP, not `.local`.** On this build, `focus-wall.local` (mDNS)
 > resolved fine initially but **stopped resolving after a reboot** (SSH by name
 > failed too), while the Pi stayed reachable by IP the whole time. mDNS is too
 > flaky to hang the hook path on. Fix: add a **DHCP reservation** on the router
 > so the Pi's IP is permanent, then point the hooks at it —
-> `FOCUSWALL_URL=http://<reserved-ip>:5050/events` (here: `<pi-ip>`). The
+> `FOCUSWALL_URL=http://<reserved-ip>:5050/events`. The
 > kiosk autostart is unaffected — it uses `localhost`. Fixing avahi to get the
 > hostname back is optional convenience, not required.
 
@@ -189,7 +189,7 @@ also what makes the nightly restart in §6 work):
       --disable-translate \
       --no-first-run \
       --check-for-update-interval=31536000 \
-      --app='http://localhost:5050/wall?kiosk=1&rotate=30'
+      --app='http://localhost:5050/wall?kiosk=1&rotate=10'
     sleep 2   # avoid a tight respawn loop
   done
 ) &
@@ -265,6 +265,51 @@ the cord until it does.
 | Screen blanks | Re-run raspi-config display options (§7d); confirm sleep targets masked |
 | `focus-wall.local` won't resolve | `avahi-resolve -n focus-wall.local` (Linux) or use the IP |
 | Pi reboots randomly | Power supply — Pi 5 needs the 27W official supply |
+| Wall blank / kiosk "won't open" **after a deploy** | `docker ps -a` — if `focus-wall` is `Restarting`, see "Corrupt build cache" below |
 
-When everything survives an unannounced power cycle, the Pi deploy and kiosk
-setup are done.
+### Corrupt build cache → 0-byte `runtimeconfig.json` → blank wall (fixed 2026-07-14)
+
+**Symptom:** right after a push deployed, the wall went blank and `:5050` was
+unreachable from the LAN even though the Pi pinged fine and the deploy job showed
+green. `docker ps -a` showed `focus-wall` = `Restarting`, and `docker logs
+focus-wall` repeated:
+
+```
+Failed to map file. mmap(/app/FocusWall.Server.runtimeconfig.json) failed with error 22
+Cannot use file stream for [...runtimeconfig.json]: Invalid argument
+Invalid runtimeconfig.json [...]
+```
+
+**Root cause:** a **poisoned Docker build-cache layer** produced a **0-byte
+`runtimeconfig.json`** in the image (`mmap` of a zero-length file returns EINVAL,
+so the .NET host can't start → crash-loop → dead `:5050` → the kiosk has no page).
+It was **not** the app code, config, disk space (disk was 39% full), the SD card
+(no `dmesg` I/O errors), or the kernel page size (4096). The corruption lived in
+Docker's cache under `/var/lib/docker`, *not* in the `_work` checkout.
+
+**Confirm it** (bypasses the crashing host by running `sh` instead of `dotnet`):
+
+```bash
+docker run --rm --entrypoint sh focus-wall:latest -c 'ls -l /app/FocusWall.Server.runtimeconfig.json'
+# a 0-byte size = corrupt build
+```
+
+**Fix** — clean rebuild that ignores the cache, then clear the poison:
+
+```bash
+cd /home/pi/actions-runner/_work/FocusWall/FocusWall
+docker compose build --no-cache && docker compose up -d
+curl -sf http://localhost:5050/healthz && echo OK
+pkill -f 'chromium.*--kiosk' || true   # bring the wall back
+docker builder prune -af               # evict the corrupt cache
+```
+
+**Prevention (now in `deploy.yml`):** the deploy is health-gated — if `/healthz`
+doesn't answer within 60s it auto-rebuilds `--no-cache` and retries; if still
+unhealthy it fails the job **without** reloading the kiosk (last good page stays
+up); an `if: always()` step prunes the cache (keep ≤2GB) each run. So this should
+now self-heal, and a genuinely broken build fails loudly instead of blanking the
+wall.
+
+When everything survives an unannounced power cycle, Phase 2 + 3 are done —
+next up is Phase 4 (polish against the real wall).

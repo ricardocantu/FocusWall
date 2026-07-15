@@ -10,11 +10,16 @@ const listEl    = document.getElementById('list');
 const summaryEl = document.getElementById('summary');
 const wordEl    = document.getElementById('summary-word');
 const subEl     = document.getElementById('summary-sub');
+const snoozeEl  = document.getElementById('snooze');
+const clearBtn  = snoozeEl.querySelector('.m-snooze-clear');
+
+let snoozedUntil = null;   // Date when snooze ends, or null. Overlay, not a status.
 
 const STATUS_WORD  = { idle: 'Idle', working: 'Working', waiting: 'Waiting', done: 'Done' };
 const SUMMARY_WORD = { idle: 'All idle', working: 'Working', waiting: 'Waiting for you', done: 'Done' };
 
 let sessions = [];
+let lastStatus = { value: 'idle', sessions: [] };   // last status payload, for local snooze re-render
 const activity = new Map();   // "host/sid" -> array of last 3 tool activities (live)
 const prompts  = new Map();   // "host/sid" -> last truncated prompt (live)
 
@@ -52,6 +57,20 @@ function fmtSince(sinceIso) {
 // payload the server already orders loudest-first, so they can't desync.
 function renderSummary(s) {
   const value = s.value || 'idle';
+
+  // Snooze is an overlay: sessions/counts stay honest below, but the banner
+  // reads "Snoozed (Nm left)" instead of the waiting pulse while it's active.
+  const su = s.snoozedUntil ? new Date(s.snoozedUntil) : null;
+  snoozedUntil = su && su > new Date() ? su : null;
+  clearBtn.hidden = snoozedUntil === null;
+
+  if (snoozedUntil) {
+    summaryEl.dataset.status = 'snoozed';
+    wordEl.textContent = 'Snoozed';
+    renderSnoozeSub();
+    return;
+  }
+
   summaryEl.dataset.status = value;
   wordEl.textContent = SUMMARY_WORD[value] || value;
 
@@ -63,6 +82,25 @@ function renderSummary(s) {
   parts.push(`${total} session${total === 1 ? '' : 's'}`);
   subEl.textContent = parts.join(' · ');
 }
+
+function renderSnoozeSub() {
+  if (!snoozedUntil) return;
+  const left = Math.floor((snoozedUntil - Date.now()) / 1000);
+  const m = Math.floor(left / 60);
+  subEl.textContent = m >= 1 ? `${m}m left` : `${Math.max(left, 0)}s left`;
+}
+
+async function snooze(minutes) {
+  try {
+    await fetch(`/snooze?minutes=${minutes}`, { method: 'POST' });
+    // No optimistic UI: the server broadcasts the new status back over SSE.
+  } catch { /* fire-and-forget; SSE will reconcile on the next status */ }
+}
+
+snoozeEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('.m-snooze-btn');
+  if (btn) snooze(Number(btn.dataset.minutes));
+});
 
 // Cards built with textContent, never innerHTML — payload fields (message, cwd)
 // are writable by anyone on the LAN via POST /events.
@@ -155,6 +193,12 @@ function tick() {
   for (const el of listEl.querySelectorAll('.card-time')) {
     el.textContent = fmtSince(el.dataset.since);
   }
+  // Snooze countdown self-corrects locally when it lapses, before the server's
+  // next heartbeat rebroadcast catches up.
+  if (snoozedUntil) {
+    if (snoozedUntil - Date.now() <= 0) { snoozedUntil = null; renderSummary(lastStatus); }
+    else renderSnoozeSub();
+  }
 }
 setInterval(tick, 1000);
 
@@ -186,6 +230,6 @@ connectStream({
   // SSE replays the ring buffer on every (re)connect, so reset the live maps on
   // open — otherwise a reconnect re-pushes replayed tool events onto stale state.
   onOpen: () => { activity.clear(); prompts.clear(); },
-  onStatus: (s) => { sessions = s.sessions || []; renderSummary(s); renderList(); },
+  onStatus: (s) => { lastStatus = s; sessions = s.sessions || []; renderSummary(s); renderList(); },
   onEvent,
 });
