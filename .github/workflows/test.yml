@@ -1,0 +1,77 @@
+# Runs on GitHub-hosted runners only. The Pi deploy workflow stays an inert
+# .example in this public repo (see DEPLOYMENT.md § 4a); when you activate it in
+# a private fork it triggers off this workflow's success.
+name: Test
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: .NET tests
+        run: dotnet test tests/FocusWall.Server.Tests --configuration Release
+
+      - name: Shell syntax
+        run: bash -n hooks/*.sh tests/*.sh
+
+      - name: JavaScript syntax
+        run: find src/FocusWall.Server/wwwroot -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Hook sender privacy contract
+        run: bash tests/hook-send.test.sh
+
+      - name: Usage poller reducer
+        run: bash tests/usage-poll.reduce.test.sh
+
+      - name: Installer embeds match the senders
+        run: bash tests/installer-embed.test.sh
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Production PowerShell is BOM-less ASCII
+        shell: pwsh
+        run: |
+          $bad = @()
+          Get-ChildItem hooks, tests -Filter '*.ps1' | ForEach-Object {
+            $bytes = [IO.File]::ReadAllBytes($_.FullName)
+            if (@($bytes | Where-Object { $_ -ne 9 -and $_ -ne 10 -and $_ -ne 13 -and ($_ -lt 32 -or $_ -gt 126) }).Count -gt 0) {
+              $bad += $_.FullName
+            }
+          }
+          if ($bad.Count -gt 0) { throw "Non-ASCII or BOM bytes found: $($bad -join ', ')" }
+
+      - name: Hook sender privacy contract (PowerShell 7)
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/hook-send.Tests.ps1
+
+      - name: Hook sender privacy contract (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/hook-send.Tests.ps1
+
+      - name: .NET tests
+        shell: pwsh
+        run: dotnet test tests/FocusWall.Server.Tests --configuration Release

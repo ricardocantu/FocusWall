@@ -1,0 +1,1 @@
+{"hook_event_name":"PostToolUse","session_id":"sess-1","transcript_path":"/home/you/.claude/projects/x/transcript.jsonl","cwd":"/home/you/projects/my-project","tool_name":"Read","tool_input":{"file_path":"/home/you/projects/my-project/README.md"},"tool_response":{"filePath":"/home/you/projects/my-project/README.md","content":"SECRET_FILE_BODY"}}

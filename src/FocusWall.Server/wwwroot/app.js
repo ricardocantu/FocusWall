@@ -14,7 +14,19 @@ const mLast        = document.getElementById('m-last');
 const strip        = document.getElementById('sessions-strip');
 const stripCards   = document.getElementById('strip-cards');
 
-const STATUS_WORD = { idle: 'Idle', working: 'Working', waiting: 'Waiting', done: 'Done' };
+const STATUS_WORD = { idle: 'Idle', working: 'Working', waiting: 'Waiting', done: 'Done', error: 'Error' };
+
+const ERROR_LABEL = {
+  rate_limit: 'rate limited',
+  overloaded: 'overloaded',
+  authentication_failed: 'authentication failed',
+  billing_error: 'billing issue',
+  server_error: 'server error',
+  invalid_request: 'invalid request',
+  model_not_found: 'model not found',
+  oauth_org_not_allowed: 'OAuth blocked for org',
+  unknown: 'connection or unknown error',
+};
 
 initKioskCursor();
 
@@ -24,6 +36,7 @@ const state = {
   sessionCount: 0,
   waitingCount: 0,
   workingCount: 0,
+  errorCount: 0,
   loudestSession: null,   // SessionState of the loudest session, if any
   lastEventAt: null,
   toolCount: 0,
@@ -36,6 +49,7 @@ const STATUS_COPY = {
   working: { title: 'Working',         detail: 'Claude is doing its thing' },
   waiting: { title: 'Waiting for you', detail: 'Input needed' },
   done:    { title: 'Done',            detail: 'Turn complete · ready for review' },
+  error:   { title: 'Error occurred',  detail: 'Something went wrong' },
 };
 
 let lastStatus = { value: 'idle', sessions: [] };
@@ -47,6 +61,7 @@ function applyStatus(s) {
   state.sessionCount  = s.sessionCount ?? 0;
   state.waitingCount  = s.waitingCount ?? 0;
   state.workingCount  = s.workingCount ?? 0;
+  state.errorCount    = s.errorCount ?? 0;
 
   const sessions = s.sessions || [];
   state.loudestSession = sessions.find(x => x.status === state.status) || null;
@@ -63,10 +78,15 @@ function applyStatus(s) {
 
   // For "waiting", show the actual notification text (permission prompt vs
   // idle nudge) — the waiting session's last event is always the Notification.
+  // For "error", show the human-readable reason — the errored session's last
+  // event is always the StopFailure that put it there.
   let detail = copy.detail;
   if (state.status === 'waiting') {
     const msg = state.loudestSession?.lastEvent?.payload?.message;
     if (msg) detail = msg;
+  } else if (state.status === 'error') {
+    const slug = state.loudestSession?.lastEvent?.payload?.error;
+    if (slug) detail = ERROR_LABEL[slug] || slug;
   }
 
   // Prefer cwd of loudest session (e.g., "my-project") for the detail line
@@ -82,7 +102,8 @@ function applyStatus(s) {
     const parts = [];
     if (state.waitingCount) parts.push(`${state.waitingCount} waiting`);
     if (state.workingCount) parts.push(`${state.workingCount} working`);
-    const others = state.sessionCount - state.waitingCount - state.workingCount;
+    if (state.errorCount) parts.push(`${state.errorCount} error`);
+    const others = state.sessionCount - state.waitingCount - state.workingCount - state.errorCount;
     if (others > 0) parts.push(`${others} idle/done`);
     heroSummary.textContent = parts.join(' · ') + ` (${state.sessionCount} total)`;
   }
@@ -193,7 +214,7 @@ function addEvent(ev) {
   li.dataset.kind = name;
   const badge = badgeFor(ev);
   for (const [cls, text] of [
-    ['time', at.toLocaleTimeString([], { hour12: false })],
+    ['time', at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })],
     ['dot', ''],
     ['badge', badge],
     ['type', name],
@@ -214,7 +235,7 @@ function addEvent(ev) {
 
 function tickClocks() {
   const now = new Date();
-  clock.textContent = now.toLocaleTimeString([], { hour12: false });
+  clock.textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
 
   if (state.lastEventAt) {
     const secs = Math.floor((now - state.lastEventAt) / 1000);
@@ -247,6 +268,46 @@ function tickClocks() {
 }
 setInterval(tickClocks, 1000);
 
+// Other-sessions strip stays a single row (app.css: flex-wrap: nowrap +
+// overflow: hidden) instead of wrapping to a second line — once the cards
+// overflow the row's width, slowly ping-pong scrollLeft back and forth so
+// every card is still readable from across the room. Runs as one persistent
+// rAF loop (not re-armed per renderStrip call) so it survives cards being
+// replaced on every status update.
+const stripScroll = { dir: 1, pauseUntil: 0, last: null };
+const STRIP_SCROLL_SPEED = 40; // px/s — deliberately slow, this is a wall display
+const STRIP_SCROLL_PAUSE_MS = 1200;
+
+function tickStripScroll(now) {
+  requestAnimationFrame(tickStripScroll);
+  if (strip.hidden) return;
+
+  const maxScroll = stripCards.scrollWidth - stripCards.clientWidth;
+  if (maxScroll <= 0) {
+    stripCards.scrollLeft = 0;
+    stripScroll.last = null;
+    return;
+  }
+  if (now < stripScroll.pauseUntil) return;
+  if (stripScroll.last == null) { stripScroll.last = now; return; }
+
+  const dt = now - stripScroll.last;
+  stripScroll.last = now;
+
+  let next = stripCards.scrollLeft + stripScroll.dir * STRIP_SCROLL_SPEED * dt / 1000;
+  if (next >= maxScroll) {
+    next = maxScroll;
+    stripScroll.dir = -1;
+    stripScroll.pauseUntil = now + STRIP_SCROLL_PAUSE_MS;
+  } else if (next <= 0) {
+    next = 0;
+    stripScroll.dir = 1;
+    stripScroll.pauseUntil = now + STRIP_SCROLL_PAUSE_MS;
+  }
+  stripCards.scrollLeft = next;
+}
+requestAnimationFrame(tickStripScroll);
+
 // The server replays its ring buffer on every (re)connect — and EventSource
 // reconnects on any blip (Wi-Fi hiccup, nightly Chromium restart, container
 // redeploy). Start from a clean slate each time so replayed events don't
@@ -265,105 +326,25 @@ connectStream({
   onEvent: addEvent,
 });
 
-// ── Slack panel ──────────────────────────────────────────────────────────────
-// Polls same-origin /slack/state (server calls Slack, not the browser). One
-// labeled sub-block per configured account: presence + category unread rows +
-// custom status. Config/Slack-derived text → textContent only. Panel hides
-// entirely when no workspace is configured (self-disabled server-side).
-const slackPanel    = document.getElementById('slack-panel');
-const slackAccounts = document.getElementById('slack-accounts');
-
-const PRESENCE = {
-  active: { cls: 'active', label: 'Active' },
-  away:   { cls: 'away',   label: 'Away' },
-};
-
-function slackCount(n) { return n > 0 ? String(n) : '—'; }
-
-function slackBlock(w) {
-  const block = document.createElement('div');
-  block.className = 'slack-block';
-
-  const head = document.createElement('div');
-  head.className = 'slack-head';
-  const label = document.createElement('span');
-  label.className = 'slack-label';
-  label.textContent = w.label || 'Slack';
-  const pres = document.createElement('span');
-  pres.className = 'slack-presence';
-  if (w.error) {
-    pres.textContent = 'reconnect';
-    pres.classList.add('warn');
-  } else if (PRESENCE[w.presence]) {
-    pres.textContent = PRESENCE[w.presence].label;
-    pres.classList.add(PRESENCE[w.presence].cls);
-  }
-  head.append(label, pres);
-  block.append(head);
-
-  if (w.error) return block;   // counts are 0/unknown on error — show only the header
-
-  const rows = document.createElement('div');
-  rows.className = 'slack-rows';
-  for (const [name, val] of [
-    ['Mentions', w.channelMentions],
-    ['Channels', w.channelsUnread],
-    ['DMs',      w.dmMentions],
-    ['Threads',  w.threadsUnread],
-  ]) {
-    const row = document.createElement('div');
-    row.className = 'slack-row' + (val > 0 ? ' has' : '');
-    const n = document.createElement('span');
-    n.className = 'slack-row-name';
-    n.textContent = name;
-    const c = document.createElement('span');
-    c.className = 'slack-row-count';
-    c.textContent = slackCount(val);
-    row.append(n, c);
-    rows.append(row);
-  }
-  block.append(rows);
-
-  if (w.statusText) {
-    const st = document.createElement('div');
-    st.className = 'slack-status';
-    st.textContent = w.statusText;
-    block.append(st);
-  }
-  return block;
-}
-
-function renderSlack(data) {
-  const ws = data?.workspaces || [];
-  if (ws.length === 0) { slackPanel.hidden = true; return; }
-  slackPanel.hidden = false;
-  // Pulse the whole panel (like the waiting hero) when something is directed at
-  // you — mentions + unread DMs, the server's totalMentions aggregate.
-  slackPanel.classList.toggle('alert', (data.totalMentions || 0) > 0);
-  slackAccounts.replaceChildren();
-  for (const w of ws) slackAccounts.append(slackBlock(w));
-}
-
-async function refreshSlack() {
-  try {
-    const res = await fetch('/slack/state');
-    if (!res.ok) throw new Error(String(res.status));
-    renderSlack(await res.json());
-  } catch { /* keep last render on transient failure */ }
-}
-refreshSlack();
-setInterval(refreshSlack, 30000);
-
 // ── Bottom-band crossfade ────────────────────────────────────────────────────
-// Rotates metrics → recent events → usage in place. The usage panel is fed by
-// usage.js (it refreshes #usage-accounts on its own). ?rotate=<secs> overrides.
+// Rotates metrics → recent events → usage → calendar in place. The usage panel
+// is fed by usage.js and the calendar panel by calendar.js (each refreshes its
+// own content independently). ?rotate=<secs> overrides.
+//
+// #panel-calendar can be legitimately hidden (no Calendar:Sources configured),
+// toggled dynamically by calendar.js after this array is already snapshotted —
+// skip hidden panels each tick so the rotation never lands on one and blanks
+// that slot (CSS `[hidden]` forces display:none regardless of `.active`).
 const bandPanels = [...document.querySelectorAll('.band-panel')];
 if (bandPanels.length > 1) {
   const bandSecs = parseInt(new URLSearchParams(location.search).get('rotate'), 10) || 15;
   let bandIdx = 0;
   setInterval(() => {
+    if (bandPanels.filter(p => !p.hidden).length < 2) return; // nothing to rotate to
     bandPanels[bandIdx].classList.remove('active');
-    bandIdx = (bandIdx + 1) % bandPanels.length;
+    do {
+      bandIdx = (bandIdx + 1) % bandPanels.length;
+    } while (bandPanels[bandIdx].hidden);
     bandPanels[bandIdx].classList.add('active');
   }, bandSecs * 1000);
 }

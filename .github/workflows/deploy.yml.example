@@ -16,25 +16,55 @@
 #      (Settings → Secrets and variables → Actions) — the env block below reads
 #      them. Any unset secret just disables that one channel. See the
 #      *_SETUP_CHECKLIST.md files for which secrets each channel needs.
-#   4. Rename this file to `deploy.yml` and push to `main`.
+#   4. Rename this file to `deploy.yml` and push to `main`. It triggers off the
+#      `Test` workflow (`test.yml`, which does run in this repo), so a push
+#      whose tests fail — on Ubuntu or on Windows — never reaches the Pi, and
+#      the Pi checks out the exact commit that passed.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Deploy to Pi
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["Test"]
+    types: [completed]
 
 jobs:
   deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: [self-hosted, focus-wall-pi]
     steps:
-      - uses: actions/checkout@v4
+      - name: Preserve runner-local environment
+        # The runner's untracked .env (the local/manual alternative to GitHub
+        # secrets — VOICEMONKEY_*, DISCORD_WEBHOOK_URL, SLACK_WS*, CAL_SRC*)
+        # would be deleted by the clean checkout below. Copy it aside first.
+        shell: bash
+        run: |
+          preserved="$RUNNER_TEMP/focuswall-runner.env"
+          if [ -f .env ]; then
+            install -m 600 .env "$preserved"
+          fi
+
+      - uses: actions/checkout@v7
         with:
-          # actions/checkout defaults to `git clean -ffdx` before checkout,
-          # which would delete the runner's untracked .env file (holds
-          # VOICEMONKEY_TOKEN / DISCORD_WEBHOOK_URL if Phase 6 is in use).
-          clean: false
+          # Deploy the exact revision that passed the full Test workflow.
+          ref: ${{ github.event.workflow_run.head_sha }}
+          # The Pi runner is persistent. A clean checkout prevents stale or
+          # untracked files under the Docker build context from entering the
+          # deployed image, so it is built from the exact tested revision.
+          clean: true
+
+      - name: Restore runner-local environment
+        if: always()
+        shell: bash
+        run: |
+          preserved="$RUNNER_TEMP/focuswall-runner.env"
+          if [ -f "$preserved" ]; then
+            install -m 600 "$preserved" .env
+          fi
 
       - name: Build, deploy, and health-check (auto-recover on failure)
         # Cached build for speed. Then GATE on /healthz: if the container isn't
@@ -87,6 +117,14 @@ jobs:
           SLACK_WS1_LABEL: ${{ secrets.SLACK_WS1_LABEL }}
           SLACK_WS1_TOKEN: ${{ secrets.SLACK_WS1_TOKEN }}
           SLACK_WS1_COOKIE: ${{ secrets.SLACK_WS1_COOKIE }}
+          # Calendar agenda pane. ICS feed URLs are secret (each embeds an auth
+          # token) → repository *secrets*, masked in logs. docker compose reads
+          # them for the ${CAL_SRC*} interpolation. Unset → CalendarService
+          # self-disables.
+          CAL_SRC0_LABEL: ${{ secrets.CAL_SRC0_LABEL }}
+          CAL_SRC0_ICS_URL: ${{ secrets.CAL_SRC0_ICS_URL }}
+          CAL_SRC1_LABEL: ${{ secrets.CAL_SRC1_LABEL }}
+          CAL_SRC1_ICS_URL: ${{ secrets.CAL_SRC1_ICS_URL }}
 
       - name: Reload kiosk browser
         # Only reached when the previous step exited 0 — i.e. the server is

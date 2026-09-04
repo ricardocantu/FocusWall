@@ -25,10 +25,9 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
 
-  # Action versions in .github/workflows/*. No workflows are tracked today
-  # (the deploy workflow is intentionally kept out of this repo), so this is
-  # a no-op until one is added — at which point Dependabot keeps its actions
-  # pinned and patched automatically.
+  # Action versions in .github/workflows/*. test.yml is live and gets bumped
+  # here; the deploy sample (deploy.yml.example) is not parsed by GitHub, so
+  # bump its pins by hand whenever Dependabot updates test.yml.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

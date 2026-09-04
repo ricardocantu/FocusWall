@@ -73,7 +73,8 @@ function Reduce-Raw ($rawObj, $hostName, $label, $ts) {
     return ([pscustomobject]$summary | ConvertTo-Json -Depth 10 -Compress)
 }
 
-# Summary with no limits, given a status string (no_token / auth_expired).
+# Summary with no limits, given a status string (no_token / auth_expired / timeout;
+# the Windows creds file never blocks, so only the first two occur here).
 function New-EmptySummary ($hostName, $label, $ts, $status) {
     $summary = [ordered]@{ host = $hostName; label = $label; status = $status; ts = $ts; limits = @() }
     return ([pscustomobject]$summary | ConvertTo-Json -Depth 10 -Compress)
@@ -113,8 +114,9 @@ function Read-Token {
 # Short timeout, all errors swallowed: a down wall never surfaces a failure.
 function Send-Summary ($json) {
     try {
-        Invoke-RestMethod -Uri $ReportUrl -Method Post -ContentType 'application/json' `
-            -Body $json -TimeoutSec 5 -ErrorAction Stop | Out-Null
+        $body = [Text.Encoding]::UTF8.GetBytes($json)
+        Invoke-RestMethod -Uri $ReportUrl -Method Post -ContentType 'application/json; charset=utf-8' `
+            -Body $body -TimeoutSec 5 -ErrorAction Stop | Out-Null
     } catch { }
 }
 

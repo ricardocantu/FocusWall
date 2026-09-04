@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.ServiceModel.Syndication" Version="10.0.9" />
+    <PackageReference Include="Ical.Net" Version="5.2.3" />
   </ItemGroup>
 </Project>

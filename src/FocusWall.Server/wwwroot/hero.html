@@ -54,12 +54,19 @@
         </div>
       </section>
       <section class="band-panel" id="panel-usage">
-        <div class="log-title band-usage-title">Usage</div>
         <div class="usage-accounts" id="usage-accounts"></div>
+      </section>
+      <section class="band-panel" id="panel-calendar" hidden>
+        <div class="calendar-panel">
+          <div class="calendar-title">Today's meetings</div>
+          <ul class="calendar-agenda" id="calendar-agenda"></ul>
+        </div>
       </section>
     </section>
   </main>
   <script src="/app.js" type="module"></script>
+  <script src="/slack.js" type="module"></script>
   <script src="/usage.js" type="module"></script>
+  <script src="/calendar.js" type="module"></script>
 </body>
 </html>

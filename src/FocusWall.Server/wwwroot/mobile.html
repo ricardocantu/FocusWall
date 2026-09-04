@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Claude Focus Wall — Mobile</title>
   <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/usage.css">
   <link rel="stylesheet" href="/mobile.css">
 </head>
 <body class="mobile-page">
@@ -34,6 +35,22 @@
        app.css styles + the waiting pulse apply unchanged. -->
   <section class="m-list" id="list"></section>
 
+  <!-- Slack panel: reuses the shared slack.js module (same markup/IDs and
+       polling as the hero's aside), just laid out full-width & stacked. -->
+  <aside class="slack-panel m-slack" id="slack-panel" hidden>
+    <div class="slack-panel-title">Slack</div>
+    <div class="slack-accounts" id="slack-accounts"></div>
+  </aside>
+
+  <!-- Usage gauges: reuses usage.js unmodified (same #usage-accounts
+       contract as hero.html/usage.html). -->
+  <section class="m-usage">
+    <div class="m-usage-title">Usage</div>
+    <div class="usage-accounts" id="usage-accounts"></div>
+  </section>
+
   <script src="/mobile.js" type="module"></script>
+  <script src="/slack.js" type="module"></script>
+  <script src="/usage.js" type="module"></script>
 </body>
 </html>

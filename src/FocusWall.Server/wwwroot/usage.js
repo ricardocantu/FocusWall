@@ -16,7 +16,7 @@ function fmtResets(iso, now = Date.now()) {
   if (mins < 60) return `resets in ${mins}m`;
   // Beyond an hour, an absolute clock time reads better than "123h".
   const d = new Date(t);
-  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
   if (d.toDateString() === new Date(now).toDateString()) return `resets at ${time}`;
   const day = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
   return `resets ${day}, ${time}`;
@@ -60,25 +60,21 @@ function gauge(lim) {
 
 function card(acct) {
   const el = document.createElement('section');
-  el.className = 'usage-card' + (acct.stale ? ' stale' : '');
+  el.className = 'usage-card';
   const h = document.createElement('h2');
   h.textContent = acct.label || acct.host;
   el.appendChild(h);
 
-  if (acct.status === 'auth_expired' || acct.status === 'no_token') {
+  if (acct.status === 'auth_expired' || acct.status === 'no_token' || acct.status === 'timeout') {
     const note = document.createElement('p');
     note.className = 'usage-note';
-    note.textContent = `Sign in on ${acct.host} (run claude)`;
+    note.textContent = acct.status === 'timeout'
+      ? `Keychain read timed out on ${acct.host} (unlock the login keychain)`
+      : `Sign in on ${acct.host} (run claude)`;
     el.appendChild(note);
     return el;
   }
   for (const lim of acct.limits || []) el.appendChild(gauge(lim));
-  if (acct.stale) {
-    const note = document.createElement('p');
-    note.className = 'usage-note';
-    note.textContent = 'stale — last report over 15m ago';
-    el.appendChild(note);
-  }
   return el;
 }
 
@@ -88,15 +84,19 @@ async function refresh() {
     const res = await fetch('/usage/state');
     if (!res.ok) throw new Error(String(res.status));
     const { accounts } = await res.json();
+    // Drop stale accounts (no report in 15+ min) entirely rather than dimming
+    // them — a workstation that goes idle/offline should disappear immediately,
+    // not linger greyed-out on the wall. `stale` is computed server-side.
+    const active = (accounts || []).filter((a) => !a.stale);
     root.replaceChildren();
-    if (!accounts || accounts.length === 0) {
+    if (active.length === 0) {
       const p = document.createElement('p');
       p.className = 'usage-empty';
       p.textContent = 'No usage reports yet.';
       root.appendChild(p);
       return;
     }
-    for (const acct of accounts) root.appendChild(card(acct));
+    for (const acct of active) root.appendChild(card(acct));
   } catch {
     /* keep last render on transient failure */
   }

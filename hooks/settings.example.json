@@ -2,6 +2,7 @@
   "hooks": {
     "Notification":      [{ "hooks": [{ "type": "command", "command": "/abs/path/to/focus-wall/hooks/hook-send.sh" }] }],
     "Stop":              [{ "hooks": [{ "type": "command", "command": "/abs/path/to/focus-wall/hooks/hook-send.sh" }] }],
+    "StopFailure":       [{ "hooks": [{ "type": "command", "command": "/abs/path/to/focus-wall/hooks/hook-send.sh" }] }],
     "SessionStart":      [{ "hooks": [{ "type": "command", "command": "/abs/path/to/focus-wall/hooks/hook-send.sh" }] }],
     "SessionEnd":        [{ "hooks": [{ "type": "command", "command": "/abs/path/to/focus-wall/hooks/hook-send.sh" }] }],
     "UserPromptSubmit":  [{ "hooks": [{ "type": "command", "command": "/abs/path/to/focus-wall/hooks/hook-send.sh" }] }],

@@ -48,6 +48,12 @@ body.mobile-page {
   animation: waitpulse 2s ease-in-out infinite;
 }
 .m-summary[data-status="waiting"] .m-summary-word { color: var(--waiting); }
+.m-summary[data-status="error"] {
+  border-color: var(--error);
+  background: rgba(192, 57, 43, 0.14);
+  animation: errorpulse 2s ease-in-out infinite;
+}
+.m-summary[data-status="error"] .m-summary-word { color: var(--error); }
 /* Snoozed: calm + dimmed, no pulse — a snoozed wall must not read as an alert. */
 .m-summary[data-status="snoozed"] { border-color: var(--idle); background: var(--bg-elev); }
 .m-summary[data-status="snoozed"] .m-summary-word { color: var(--fg-dim); }
@@ -71,3 +77,39 @@ body.mobile-page {
 .m-list .card { padding: 18px; gap: 8px; }
 .m-list .card-project { font-size: 24px; }
 .m-list .grid-empty { height: 40vh; font-size: 20px; }
+
+/* --- Slack + Usage sections (reuse slack.js / usage.js unmodified) --- */
+/* The hero's Slack/Usage CSS is tuned for a fixed-width rotator column
+   (vh/vw clamps, grid-column: 10/13) — override for a full-width stacked
+   phone layout, same spirit as the .m-list .card overrides above. */
+.m-slack {
+  margin: 0 12px 14px;
+  padding: 18px;
+}
+.m-slack .slack-label { font-size: 20px; }
+.m-slack .slack-presence { font-size: 14px; }
+.m-slack .slack-row { font-size: 16px; }
+
+.m-usage-title {
+  color: var(--fg-dim); font-size: 13px; letter-spacing: .5px; text-transform: uppercase;
+  margin: 0 12px 8px;
+}
+.m-usage .usage-accounts {
+  grid-template-columns: 1fr;
+  padding: 0 12px 24px;
+  gap: 14px;
+}
+.m-usage .usage-card { padding: 18px; }
+.m-usage .usage-card h2 { font-size: 20px; }
+.m-usage .usage-gauge-label { font-size: 16px; }
+
+.card-close {
+  align-self: flex-end;
+  margin-top: 4px;
+  min-height: 36px; padding: 0 14px;
+  background: transparent; color: var(--fg-dim);
+  border: 0.5px solid var(--border); border-radius: 10px;
+  font-size: 13px; font-weight: 500;
+  -webkit-tap-highlight-color: transparent;
+}
+.card-close:active { background: var(--border); color: var(--fg); }

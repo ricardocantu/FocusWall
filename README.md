@@ -8,14 +8,15 @@ When Claude Code is doing long-running work — multi-step refactors, test runs,
 
 ## At a glance
 
-- **Hero status** readable from 10 feet: idle / working / waiting / done
-- **Event log** of recent hook fires (Notification, Stop, PreToolUse, PostToolUse, UserPromptSubmit, SessionStart/End)
+- **Hero status** readable from 10 feet: idle / working / waiting / done / error (red: Claude Code hit an API or connection failure)
+- **Event log** of recent hook fires (Notification, Stop, StopFailure, PreToolUse, PostToolUse, UserPromptSubmit, SessionStart/End)
 - **Session metrics** — total sessions, tool calls, edits, time since last event
-- **Kiosk wall view** — a `/wall` kiosk page that frames the loudest-status hero (`/hero`) between two configurable RSS news tickers (general news along the top, sports along the bottom, each item date-stamped); the hero's bottom band crossfades session metrics, the recent-events log, and the usage gauges in place without reloading (`?rotate=<seconds>`)
-- **Mobile companion view** — a phone-optimized `/mobile` page: a sticky loudest-status glance banner over a scrollable single-column session list, on the same live stream (LAN-only)
-- **Snooze** — a 30m/1h/clear remote on `/mobile` silences the "waiting" pulse and Echo/Discord push without touching the underlying state; Notification events still log
+- **Kiosk wall view** — a `/wall` kiosk page that frames the loudest-status hero (`/hero`) between two configurable RSS news tickers (general news along the top, sports along the bottom, each item date-stamped); the hero's bottom band crossfades session metrics, the recent-events log, the usage gauges, and today's meetings in place without reloading (`?rotate=<seconds>`)
+- **Mobile companion view** — a phone-optimized `/mobile` page: a sticky loudest-status glance banner over a scrollable single-column session list, plus the Slack panel, the usage gauges, and a per-session Close button for stale idle/waiting/error cards, on the same live stream (LAN-only)
+- **Snooze** — a 30m/1h/clear remote on `/mobile` silences the "waiting" (or "error") pulse and Echo/Discord push without touching the underlying state; Notification events still log
 - **Usage limits page** — a `/usage` page of per-account subscription limit gauges (the data behind Claude Code's `/usage` command), fed by a per-workstation poller (macOS, Linux, and Windows); only the reduced summary leaves the workstation, never the OAuth token
-- **Multi-session by design** — run any number of Claude Codes in parallel; the hero always shows the "loudest" (waiting > working > done > idle) so a working session can't mask a waiting one
+- **Calendar agenda** — an optional *Today's meetings* panel in the hero's bottom band, fed by one or two secret iCal URLs (Google / Outlook); nothing configured, nothing shown
+- **Multi-session by design** — run any number of Claude Codes in parallel; the hero always shows the "loudest" (error > waiting > working > done > idle) so a working session can't mask a waiting one
 - **Multi-host capable** — same server handles multiple workstations, each session tagged with its origin
 - **Optional notification channels** — Echo Show voice announcements and Discord push notifications, both driven by the same status stream
 - **Reuses your stack** — ASP.NET minimal API, Docker, all familiar tooling
@@ -47,6 +48,8 @@ The server is the single source of truth. The Pi wall display is the primary sur
 | [ECHO_SETUP_CHECKLIST.md](./ECHO_SETUP_CHECKLIST.md) | Do-this-now checklist to turn on Echo Show announcements (Voice Monkey → GitHub secrets → deploy → verify) |
 | [DISCORD.md](./DISCORD.md) | Optional: push notifications via Discord webhook (design + `DiscordNotifier` code) |
 | [DISCORD_SETUP_CHECKLIST.md](./DISCORD_SETUP_CHECKLIST.md) | Do-this-now checklist to turn on Discord notifications (webhook → GitHub secret → deploy → verify) |
+| [SLACK_SETUP_CHECKLIST.md](./SLACK_SETUP_CHECKLIST.md) | Do-this-now checklist to turn on the hero's Slack unread panel (session token + cookie → GitHub secrets → deploy → verify) |
+| [CALENDAR_SETUP_CHECKLIST.md](./CALENDAR_SETUP_CHECKLIST.md) | Do-this-now checklist to turn on the *Today's meetings* panel (secret iCal URL → GitHub secrets → deploy → verify) |
 
 ## Cost and time
 
@@ -72,15 +75,16 @@ The build is "done" when all of these are true:
 
 ## Status
 
-**The dashboard is live on a wall-mounted Raspberry Pi 4.** The server (`src/FocusWall.Server/`, ASP.NET minimal API on `net10.0`) and its xunit tests (`tests/FocusWall.Server.Tests/`, 35/35 passing) run locally, and the multi-session "loudest wins" acceptance test — success criterion #3 above — passes. The container runs on the Pi (hostname `focus-wall`), a self-hosted GitHub Actions runner auto-redeploys on every push to `main`, and workstation hooks report over LAN to the Pi at `focus-wall.local` (or its LAN IP if mDNS is unreliable on your network). Kiosk mode is live: labwc (Wayland) autostart launches Chromium fullscreen on `/wall`, and the build self-recovers within ~60s of a hard power-cycle. See `PHASE2-RUNBOOK.md` for the deploy/kiosk runbook (including the Wayland Chromium flags).
+**The dashboard is live on a wall-mounted Raspberry Pi 4.** The server (`src/FocusWall.Server/`, ASP.NET minimal API on `net10.0`) and its xunit tests (`tests/FocusWall.Server.Tests/`, 65/65 passing) run locally, and the multi-session "loudest wins" acceptance test — success criterion #3 above — passes. The container runs on the Pi (hostname `focus-wall`), a self-hosted GitHub Actions runner auto-redeploys on every push to `main`, and workstation hooks report over LAN to the Pi at `focus-wall.local` (or its LAN IP if mDNS is unreliable on your network). Kiosk mode is live: labwc (Wayland) autostart launches Chromium fullscreen on `/wall`, and the build self-recovers within ~60s of a hard power-cycle. See `PHASE2-RUNBOOK.md` for the deploy/kiosk runbook (including the Wayland Chromium flags).
 
-**Views:** a composed **hero dashboard** (`/hero`, the kiosk default via `/wall`, which wraps it in two RSS news tickers — news top, sports bottom), a per-session **grid** (`/`), a phone-optimized **mobile** view (`/mobile`, home of the snooze control), and a **usage** page (`/usage`) showing each Claude account's subscription-limit gauges.
+**Views:** a composed **hero dashboard** (`/hero`, the kiosk default via `/wall`, which wraps it in two RSS news tickers — news top, sports bottom), a per-session **grid** (`/`), a phone-optimized **mobile** view (`/mobile`, home of the snooze control, the per-session Close button, and the Slack/usage sections), and a **usage** page (`/usage`) showing each Claude account's subscription-limit gauges.
 
 **Notifications & extras** — all optional, and all self-disable cleanly when unconfigured so the dashboard is never affected:
 
-- **Discord push** (`DiscordNotifier`) — live, delivering real phone pushes. Fires an amber embed to a webhook whenever any session transitions to `waiting`, with per-session cooldown + optional quiet hours. See `DISCORD_SETUP_CHECKLIST.md`.
+- **Discord push** (`DiscordNotifier`) — live, delivering real phone pushes. Fires an amber embed to a webhook whenever any session transitions to `waiting` (a red one on `error`), with per-session cooldown + optional quiet hours. See `DISCORD_SETUP_CHECKLIST.md`.
 - **Echo Show voice** (`EchoAnnouncer`) — makes an Echo Show speak "Claude is waiting for your input" via a Voice Monkey webhook, with the same cooldown/quiet-hours behavior. See `ECHO_SETUP_CHECKLIST.md`.
 - **Snooze** — silence the waiting alert for 30m / 1h from the mobile view; a global presentation overlay that suppresses the notifiers without touching per-session state.
 - **Slack panel** — your own unread badge (mentions / DMs / channels / threads + presence) per workspace, shown on the hero. Best-effort; see `SLACK_SETUP_CHECKLIST.md`.
+- **Calendar agenda** — today's meetings from one or two secret iCal URLs, as a bottom-band panel on the hero. See `CALENDAR_SETUP_CHECKLIST.md`.
 
 The remaining polish items (the physical wall mount, a second workstation) are optional and ahead.

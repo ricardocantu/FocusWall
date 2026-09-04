@@ -40,6 +40,15 @@ services:
       Slack__Workspaces__1__Label: "${SLACK_WS1_LABEL}"
       Slack__Workspaces__1__Token: "${SLACK_WS1_TOKEN}"
       Slack__Workspaces__1__Cookie: "${SLACK_WS1_COOKIE}"
+      # Calendar agenda pane (today's meetings, bottom band). Secret iCal feed
+      # URLs per calendar, from .env (gitignored) / GH secrets. Any slot with an
+      # empty IcsUrl is dropped; all empty ⇒ CalendarService self-disables and
+      # the pane stays hidden. Two slots (0,1) cover Google + Outlook.
+      # See CALENDAR_SETUP_CHECKLIST.md.
+      Calendar__Sources__0__Label: "${CAL_SRC0_LABEL}"
+      Calendar__Sources__0__IcsUrl: "${CAL_SRC0_ICS_URL}"
+      Calendar__Sources__1__Label: "${CAL_SRC1_LABEL}"
+      Calendar__Sources__1__IcsUrl: "${CAL_SRC1_ICS_URL}"
     healthcheck:
       # The aspnet base image ships neither wget nor curl; a bash /dev/tcp
       # connect is enough to prove the server is accepting connections.

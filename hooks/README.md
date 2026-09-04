@@ -37,7 +37,7 @@ Windows) or PowerShell 7+ both work.
 ```
 
 Run it with no `-Url` and it prompts you (same default). It writes the wrapper to
-`%USERPROFILE%\.focus-wall\hook-send.ps1` and merges the same 7 hook entries into
+`%USERPROFILE%\.focus-wall\hook-send.ps1` and merges the same 8 hook entries into
 `%USERPROFILE%\.claude\settings.json` (existing hooks preserved, timestamped
 `.bak` kept). If PowerShell blocks the script with an execution-policy error,
 launch it as `powershell -ExecutionPolicy Bypass -File .\install-workstation.ps1 …`.
@@ -59,16 +59,18 @@ Smoke-test the wrapper by hand after installing:
 One deliberate platform difference: the Windows wrapper POSTs **synchronously**
 with a short timeout (default 2s, override with `FOCUSWALL_TIMEOUT`) — there's no
 clean, window-less way to background it as the Unix wrapper does. It still always
-exits 0 and swallows every error, so a down server can't break Claude Code; and
-because the default URL is an IP there's no DNS stall, so a reachable wall costs
-only a few milliseconds. Uninstall with `.\install-workstation.ps1 -Uninstall`.
+exits 0 and swallows every error, so a down server can't break Claude Code; the
+worst case is `FOCUSWALL_TIMEOUT` seconds (1..10) when the wall is unreachable or
+its name doesn't resolve. Uninstall with `.\install-workstation.ps1 -Uninstall`.
 
 ## What it changes
 
 - Writes the hook wrapper to `~/.focus-wall/hook-send.sh` (the wall URL is baked
   into it).
-- Merges 7 hook entries into `~/.claude/settings.json`. **Your existing hooks
+- Merges 8 hook entries into `~/.claude/settings.json`. **Your existing hooks
   and settings are preserved** — a timestamped `.bak` is saved before any change.
+  If you installed before the `StopFailure` hook was added, re-run the installer
+  to pick it up — see below, re-running won't create duplicates.
 - Copies the usage poller to `~/.focus-wall/` and registers a scheduler that
   runs it every 5 minutes (a launchd agent on macOS, a systemd `--user` timer
   on Linux, a per-user Scheduled Task `FocusWall Usage Poll` on Windows).
@@ -84,10 +86,12 @@ Keychain, or `~/.claude/.credentials.json` on Linux and Windows), calls Anthropi
 endpoint, reduces the response to just the limit gauges, and POSTs that
 summary to the wall server. **The token itself never leaves this machine** —
 only the reduced summary (percentages, reset times, which limit is active) is
-sent, the same way the hooks strip `tool_input` before sending. If no token is
-found, or Anthropic's endpoint rejects it, the poller reports a status (
-`no_token` / `auth_expired`) instead of limit data and keeps running — it never
-blocks or errors out the scheduler.
+sent, the same way the hooks send only an allowlist of fields. If no token is
+found, Anthropic's endpoint rejects it, or the macOS Keychain read times out (a
+locked keychain, or an authorization prompt nobody answered — the read is bounded
+to 5s so one hang can't stall the schedule), the poller reports a status
+(`no_token` / `auth_expired` / `timeout`) instead of limit data and keeps running
+— it never blocks or errors out the scheduler.
 
 By default the wall groups usage by short hostname. On a shared machine, or if
 you want a friendlier label than the hostname, set `FOCUSWALL_ACCOUNT_LABEL`
@@ -106,10 +110,23 @@ Each Claude Code lifecycle event sends a small JSON blob to the wall server:
 which event fired, your short hostname, and the project directory name — enough
 to render a status dot and a session badge.
 
-**Your code and commands stay local.** Before anything is sent, the wrapper
-strips tool details down to a bare `file_path` — so Bash command lines and the
-contents of files you write **never leave your workstation**. The server is
-plain HTTP on your trusted LAN, so only run this against a wall you trust.
+**Your code and commands stay local.** The wrapper forwards an allowlist only —
+the event name, session id, notification message, tool name, the first line of
+your prompt (≤60 chars), the error code on a failure, and the `file_path` of a
+tool call — so Bash command lines, the contents of files you write or read, tool
+output, transcript paths and error details **never leave your workstation**.
+Anything credential-shaped in that free text (a password, an API key, a token)
+is replaced by a fixed label — deliberately erring on the side of dropping, so a
+prompt or tool name that merely *mentions* "token" or "secret" is masked too —
+and if the filter can't run at all, nothing is sent. See exactly what would go out:
+
+```bash
+echo '{"hook_event_name":"PreToolUse","session_id":"x","tool_name":"Bash","tool_input":{"command":"ls"}}' \
+  | ~/.focus-wall/hook-send.sh --transform-only | jq
+```
+
+(`-TransformOnly` on Windows.) The server is plain HTTP on your trusted LAN, so
+only run this against a wall you trust.
 
 ## Uninstall
 

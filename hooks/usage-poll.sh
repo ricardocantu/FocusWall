@@ -32,7 +32,7 @@ reduce() {
     }' "$file"
 }
 
-# summary with no limits, given a status string
+# summary with no limits, given a status string (no_token / auth_expired / timeout)
 empty_summary() {
   local host="$1" label="$2" ts="$3" status="$4"
   jq -cn --arg host "$host" --arg label "$label" --arg ts "$ts" --arg status "$status" \
@@ -59,10 +59,22 @@ HOST="$(hostname)"
 LABEL="${FOCUSWALL_ACCOUNT_LABEL:-$HOST}"
 TS="$(now_iso)"
 
+# The keychain read must be bounded: `security` blocks indefinitely on a
+# locked keychain or an unanswered authorization prompt, and launchd never
+# starts a second instance of a still-running label, so one unbounded call
+# stalls the schedule until reboot. Core-Perl alarm+exec is the portable
+# bound (stock macOS has no GNU timeout); alarm survives exec, so SIGALRM
+# kills `security` itself and the shell observes exit 142. Without Perl the
+# keychain is skipped entirely rather than read unbounded. Returns 142 when
+# the bound fired.
 read_token() {
+  local keychain_item
   # macOS: login Keychain. Linux: ~/.claude/.credentials.json.
-  if command -v security >/dev/null 2>&1; then
-    security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
+  if command -v security >/dev/null 2>&1 && command -v perl >/dev/null 2>&1; then
+    keychain_item="$(perl -e 'alarm(shift @ARGV); exec @ARGV or exit 127;' 5 \
+      security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)"
+    [ "$?" -ne 142 ] || return 142
+    printf '%s\n' "$keychain_item" \
       | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null
   elif [ -f "$HOME/.claude/.credentials.json" ]; then
     jq -r '.claudeAiOauth.accessToken // empty' "$HOME/.claude/.credentials.json" 2>/dev/null
@@ -80,6 +92,11 @@ post_summary() {
 }
 
 TOKEN="$(read_token)"
+if [ "$?" -eq 142 ]; then
+  echo "usage-poll: keychain read timed out (locked keychain or pending authorization prompt)" >&2
+  post_summary "$(empty_summary "$HOST" "$LABEL" "$TS" "timeout")"
+  exit 0
+fi
 if [ -z "${TOKEN:-}" ]; then
   echo "usage-poll: no token available" >&2
   post_summary "$(empty_summary "$HOST" "$LABEL" "$TS" "no_token")"

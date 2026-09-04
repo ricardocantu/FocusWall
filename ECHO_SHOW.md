@@ -27,7 +27,7 @@ flowchart LR
     VM -->|"announcement"| ECHO["Echo Show<br/>in the room"]
 ```
 
-`EchoAnnouncer` is a `BackgroundService` that subscribes to the same status channel the SSE endpoint does. When the status transitions to `waiting`, it fires the webhook. Cooldown, quiet hours, and message text all live in the service so you can tune them without touching anything else.
+`EchoAnnouncer` is a `BackgroundService` that subscribes to the same status channel the SSE endpoint does. When a session transitions to `waiting` it fires the webhook ("Claude is waiting for your input in {project}"); on `error` (Claude Code's `StopFailure` hook) it announces "Claude hit an error in {project}: {reason}". Cooldown, quiet hours, and message text all live in the service so you can tune them without touching anything else.
 
 ## One-time Voice Monkey setup
 
@@ -78,6 +78,8 @@ Two new files in `src/FocusWall.Server/`, plus three lines in `Program.cs` and a
 ```csharp
 namespace FocusWall.Server;
 
+using System.Text.Json;
+
 public class EchoAnnouncer(
     EventStore store,
     IHttpClientFactory httpFactory,
@@ -92,6 +94,24 @@ public class EchoAnnouncer(
         TimeOnly.TryParse(config["VOICEMONKEY_QUIET_START"], out var qs) ? qs : null;
     private readonly TimeOnly? _quietEnd =
         TimeOnly.TryParse(config["VOICEMONKEY_QUIET_END"], out var qe) ? qe : null;
+
+    // Sessions in either of these statuses get announced. Keyed by the
+    // specific status (not just set membership) below, so a waiting -> error
+    // or error -> waiting transition still fires a fresh announcement.
+    private static readonly HashSet<string> AlertStatuses = new() { "waiting", "error" };
+
+    private static readonly Dictionary<string, string> ErrorLabels = new()
+    {
+        ["rate_limit"] = "rate limited",
+        ["overloaded"] = "overloaded",
+        ["authentication_failed"] = "authentication failed",
+        ["billing_error"] = "billing issue",
+        ["server_error"] = "server error",
+        ["invalid_request"] = "invalid request",
+        ["model_not_found"] = "model not found",
+        ["oauth_org_not_allowed"] = "OAuth blocked for org",
+        ["unknown"] = "connection or unknown error",
+    };
 
     // Per-session cooldown — two concurrent sessions both hitting "waiting"
     // will both announce (rather than one being swallowed).
@@ -118,16 +138,26 @@ public class EchoAnnouncer(
                 if (msg.Kind != "status") continue;
                 if (msg.Data is not GlobalStatus global) continue;
 
-                // Announce for any session that just transitioned to "waiting".
-                foreach (var session in global.Sessions.Where(s => s.Status == "waiting"))
+                // Announce for any session that just transitioned into an
+                // alert status (waiting or error).
+                foreach (var session in global.Sessions.Where(s => AlertStatuses.Contains(s.Status)))
                 {
-                    if (_lastAnnouncedStatus.TryGetValue(session.Key, out var prev) && prev == "waiting")
-                        continue;  // this session already announced its waiting
+                    if (_lastAnnouncedStatus.TryGetValue(session.Key, out var prev) && prev == session.Status)
+                        continue;  // this session already announced this status
+
+                    if (global.SnoozedUntil > DateTimeOffset.UtcNow)
+                    {
+                        // Mark as announced so it doesn't back-fire the instant
+                        // snooze ends — same bookkeeping as quiet hours.
+                        log.LogInformation("Suppressed (snoozed) for {Session}", session.Key.Short);
+                        _lastAnnouncedStatus[session.Key] = session.Status;
+                        continue;
+                    }
 
                     if (IsQuietHours())
                     {
                         log.LogInformation("Suppressed (quiet hours) for {Session}", session.Key.Short);
-                        _lastAnnouncedStatus[session.Key] = "waiting";
+                        _lastAnnouncedStatus[session.Key] = session.Status;
                         continue;
                     }
 
@@ -141,11 +171,11 @@ public class EchoAnnouncer(
                     var text = BuildPhrase(session);
                     await AnnounceAsync(text, ct);
                     _lastAnnouncedAt[session.Key] = DateTimeOffset.UtcNow;
-                    _lastAnnouncedStatus[session.Key] = "waiting";
+                    _lastAnnouncedStatus[session.Key] = session.Status;
                 }
 
-                // Reset session cooldown when it leaves "waiting" (so next waiting fires again).
-                foreach (var session in global.Sessions.Where(s => s.Status != "waiting"))
+                // Reset session cooldown when it leaves the alert set (so the next alert fires again).
+                foreach (var session in global.Sessions.Where(s => !AlertStatuses.Contains(s.Status)))
                 {
                     _lastAnnouncedStatus[session.Key] = session.Status;
                 }
@@ -165,10 +195,29 @@ public class EchoAnnouncer(
 
     private static string BuildPhrase(SessionState session)
     {
+        if (session.Status == "error")
+        {
+            var label = ErrorLabel(session.LastEvent);
+            return string.IsNullOrEmpty(session.Cwd)
+                ? $"Claude hit an error: {label}."
+                : $"Claude hit an error in {session.Cwd}: {label}.";
+        }
         // If we know the project, name it. Otherwise generic.
         return string.IsNullOrEmpty(session.Cwd)
             ? "Claude is waiting for your input."
             : $"Claude is waiting for your input in {session.Cwd}.";
+    }
+
+    private static string ErrorLabel(EventEntry? lastEvent)
+    {
+        if (lastEvent is { Payload: var payload }
+            && payload.TryGetProperty("error", out var errEl)
+            && errEl.ValueKind == JsonValueKind.String)
+        {
+            var slug = errEl.GetString();
+            if (slug is not null) return ErrorLabels.TryGetValue(slug, out var label) ? label : slug;
+        }
+        return "unknown error";
     }
 
     private async Task AnnounceAsync(string text, CancellationToken ct)

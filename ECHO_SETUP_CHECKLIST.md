@@ -42,5 +42,5 @@ curl -X POST http://focus-wall.local:5050/events \
 - [ ] If the dashboard updates but the Echo is silent: `docker compose logs focus-wall | tail -50` and look for `Voice Monkey returned` (HTTP error) or `Voice Monkey call failed` (network). Token/device mismatch is the most common cause.
 
 ## Notes
-- `.env` is gitignored; the self-hosted runner's checkout uses `clean: false` so it survives redeploys.
+- `.env` is gitignored; the deploy workflow copies it aside before its clean checkout and restores it afterwards, so it survives redeploys.
 - Tuning (cooldown, phrasing, quiet hours): `ECHO_SHOW.md § Tuning the experience` + the `VOICEMONKEY_*` env vars in `docker-compose.yml`.

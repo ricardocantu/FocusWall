@@ -2,6 +2,15 @@ using System.Text.Json;
 using FocusWall.Server;
 
 var builder = WebApplication.CreateBuilder(args);
+var reloadConfigOnChange = builder.Configuration.GetValue("hostBuilder:reloadConfigOnChange", true);
+
+// Gitignored per-environment override (see .gitignore's appsettings.*.local.json
+// pattern) — drop real secret values here for local runs; never committed.
+builder.Configuration.AddJsonFile(
+    $"appsettings.{builder.Environment.EnvironmentName}.local.json",
+    optional: true,
+    reloadOnChange: reloadConfigOnChange);
+
 builder.Services.AddSingleton<EventStore>();
 builder.Services.AddSingleton<UsageStore>();
 builder.Services.AddHostedService<HeartbeatService>();
@@ -9,6 +18,8 @@ builder.Services.AddSingleton<RssCache>();
 builder.Services.AddHostedService<RssService>();
 builder.Services.AddSingleton<SlackCache>();
 builder.Services.AddHostedService<SlackService>();
+builder.Services.AddSingleton<CalendarCache>();
+builder.Services.AddHostedService<CalendarService>();
 builder.Services.AddHttpClient();
 builder.Services.AddHostedService<DiscordNotifier>();
 builder.Services.AddHostedService<EchoAnnouncer>();
@@ -72,6 +83,13 @@ app.MapGet("/events/stream", async (HttpResponse res, EventStore store, Cancella
 app.MapPost("/snooze", (int minutes, EventStore store) =>
     Results.Json(new { snoozedUntil = store.Snooze(minutes).SnoozedUntil }));
 
+// Manually dismiss a single idle/waiting/error session card (e.g. a stale
+// "waiting" session nobody's coming back to). Unauthenticated like every
+// other endpoint — trusted-LAN threat model. The button lives on /mobile,
+// same as /snooze.
+app.MapPost("/sessions/close", (string hostname, string sessionId, EventStore store) =>
+    Results.Json(store.CloseSession(hostname, sessionId)));
+
 app.MapGet("/healthz", () => Results.Ok("ok"));
 
 app.MapGet("/rss", (RssCache cache) => Results.Json(new { news = cache.News, sports = cache.Sports }));
@@ -89,14 +107,24 @@ app.MapGet("/slack/state", (SlackCache cache) =>
     });
 });
 
-app.MapGet("/hero", () =>
-    Results.File(Path.Combine(app.Environment.WebRootPath, "hero.html"), "text/html"));
+app.MapGet("/calendar/state", (CalendarCache cache) =>
+    Results.Json(new { sources = cache.Sources }));
 
-app.MapGet("/wall", () =>
-    Results.File(Path.Combine(app.Environment.WebRootPath, "wall.html"), "text/html"));
+// These page routes bypass UseStaticFiles, so they must repeat its no-store
+// header themselves: served with only Last-Modified, Chromium heuristically
+// caches the HTML, and the wall kiosk can then pair a stale DOM with fresh
+// no-store JS (missing elements → the status renderer dies mid-update).
+IResult ServePage(HttpResponse res, string file)
+{
+    res.Headers["Cache-Control"] = "no-store";
+    return Results.File(Path.Combine(app.Environment.WebRootPath, file), "text/html");
+}
 
-app.MapGet("/mobile", () =>
-    Results.File(Path.Combine(app.Environment.WebRootPath, "mobile.html"), "text/html"));
+app.MapGet("/hero", (HttpResponse res) => ServePage(res, "hero.html"));
+
+app.MapGet("/wall", (HttpResponse res) => ServePage(res, "wall.html"));
+
+app.MapGet("/mobile", (HttpResponse res) => ServePage(res, "mobile.html"));
 
 app.MapPost("/usage/report", (UsageReport report, UsageStore store) =>
 {
@@ -107,8 +135,7 @@ app.MapPost("/usage/report", (UsageReport report, UsageStore store) =>
 app.MapGet("/usage/state", (UsageStore store) =>
     Results.Json(new { accounts = store.GetState(DateTimeOffset.UtcNow) }));
 
-app.MapGet("/usage", () =>
-    Results.File(Path.Combine(app.Environment.WebRootPath, "usage.html"), "text/html"));
+app.MapGet("/usage", (HttpResponse res) => ServePage(res, "usage.html"));
 
 app.Run("http://0.0.0.0:5050");
 
@@ -120,3 +147,6 @@ static async Task SseWrite(HttpResponse res, string ev, object data, Cancellatio
     await res.WriteAsync($"event: {ev}\ndata: {json}\n\n", ct);
     await res.Body.FlushAsync(ct);
 }
+
+// Lets tests/FocusWall.Server.Tests host the app in-process (WebApplicationFactory<Program>).
+public partial class Program { }

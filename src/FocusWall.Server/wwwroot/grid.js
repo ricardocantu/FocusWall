@@ -5,7 +5,22 @@ initKioskCursor();
 const gridEl = document.getElementById('grid');
 const clock  = document.getElementById('clock');
 
-const STATUS_WORD = { idle: 'Idle', working: 'Working', waiting: 'Waiting', done: 'Done' };
+const STATUS_WORD = { idle: 'Idle', working: 'Working', waiting: 'Waiting', done: 'Done', error: 'Error' };
+
+// Maps the StopFailure hook's short error slug to a human-readable reason.
+// Falls back to the raw slug for any future value Claude Code adds that isn't
+// in this list yet, so the card never shows a blank/undefined reason.
+const ERROR_LABEL = {
+  rate_limit: 'rate limited',
+  overloaded: 'overloaded',
+  authentication_failed: 'authentication failed',
+  billing_error: 'billing issue',
+  server_error: 'server error',
+  invalid_request: 'invalid request',
+  model_not_found: 'model not found',
+  oauth_org_not_allowed: 'OAuth blocked for org',
+  unknown: 'connection or unknown error',
+};
 
 let sessions = [];
 const activity = new Map();   // "host/sid" -> array of last 3 tool activities (live)
@@ -98,7 +113,7 @@ function render() {
     // and waiting cards (for a blocked session, this is what it was doing when
     // it stopped for you). Comes from the event stream, so it may be absent
     // until the first UserPromptSubmit arrives.
-    if (s.status === 'working' || s.status === 'waiting') {
+    if (s.status === 'working' || s.status === 'waiting' || s.status === 'error') {
       const wo = prompts.get(keyOf(s.key));
       if (wo) {
         const w = document.createElement('div');
@@ -145,12 +160,20 @@ function render() {
       }
     }
 
+    if (s.status === 'error') {
+      const slug = s.lastEvent?.payload?.error;
+      const m = document.createElement('div');
+      m.className = 'card-msg';
+      m.textContent = slug ? `Error occurred · ${ERROR_LABEL[slug] || slug}` : 'Error occurred';
+      card.appendChild(m);
+    }
+
     gridEl.appendChild(card);
   }
 }
 
 function tick() {
-  clock.textContent = new Date().toLocaleTimeString([], { hour12: false });
+  clock.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
   for (const el of gridEl.querySelectorAll('.card-time')) {
     el.textContent = fmtSince(el.dataset.since);
   }

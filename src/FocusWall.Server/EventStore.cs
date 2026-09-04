@@ -32,6 +32,7 @@ public record GlobalStatus(
     int SessionCount,
     int WaitingCount,
     int WorkingCount,
+    int ErrorCount,
     List<SessionState> Sessions,
     // When non-null and in the future, the wall is snoozed: the client renders
     // "Snoozed (Nm left)" instead of the waiting pulse and the notifiers stay
@@ -55,6 +56,7 @@ public class EventStore
     // Priority — higher number is louder in the "who wins the hero" contest
     private static readonly Dictionary<string, int> _priority = new()
     {
+        ["error"]   = 5,
         ["waiting"] = 4,
         ["working"] = 3,
         ["done"]    = 2,
@@ -96,6 +98,31 @@ public class EventStore
             _lastBroadcastSignature = ComputeSignatureLocked();
         }
         Broadcast(new StreamMessage("status", global));
+        return global;
+    }
+
+    // Manually dismiss a single idle/waiting/error session — e.g. a stale
+    // "waiting" card nobody's coming back to. Removes it from the shared
+    // EventStore, so it disappears from every view (grid/hero/wall/mobile)
+    // at once, not just the client that closed it. If that session sends
+    // another event later, it just reappears fresh, the same as any pruned
+    // session would. Ineligible statuses (working, done) and unknown keys
+    // are a harmless no-op — no state change, no broadcast.
+    public GlobalStatus CloseSession(string hostname, string sessionId)
+    {
+        var key = new SessionKey(hostname, sessionId);
+        GlobalStatus global;
+        bool removed;
+        lock (_lock)
+        {
+            removed = _sessions.TryGetValue(key, out var existing)
+                && existing.Status is "idle" or "waiting" or "error"
+                && _sessions.Remove(key);
+
+            global = ComputeGlobalStatusLocked();
+            if (removed) _lastBroadcastSignature = ComputeSignatureLocked();
+        }
+        if (removed) Broadcast(new StreamMessage("status", global));
         return global;
     }
 
@@ -156,6 +183,7 @@ public class EventStore
     private static string DeriveSessionStatus(string? eventName, string current) => eventName switch
     {
         "Notification"     => "waiting",
+        "StopFailure"      => "error",
         "Stop"             => "done",
         "PreToolUse"       => "working",
         "PostToolUse"      => "working",
@@ -255,7 +283,7 @@ public class EventStore
 
         var active = _sessions.Values.ToList();
         if (active.Count == 0)
-            return new GlobalStatus("idle", now, 0, 0, 0, new(), snoozedUntil);
+            return new GlobalStatus("idle", now, 0, 0, 0, 0, new(), snoozedUntil);
 
         var loudest = active.MaxBy(s => _priority[s.Status])!;
         var loudestSince = active
@@ -268,6 +296,7 @@ public class EventStore
             SessionCount: active.Count,
             WaitingCount: active.Count(s => s.Status == "waiting"),
             WorkingCount: active.Count(s => s.Status == "working"),
+            ErrorCount: active.Count(s => s.Status == "error"),
             Sessions: active.OrderByDescending(s => _priority[s.Status]).ToList(),
             SnoozedUntil: snoozedUntil);
     }

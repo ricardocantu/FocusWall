@@ -167,4 +167,67 @@ public class EventStoreTests
 
         Assert.Equal("my-project", store.GetStatus().Sessions.Single().Cwd);
     }
+
+    [Fact]
+    public void StopFailureEntersErrorStatus()
+    {
+        var store = new EventStore();
+        store.Add(Ev("PreToolUse", "a"));
+        store.Add(Ev("StopFailure", "a"));
+
+        Assert.Equal("error", store.GetStatus().Sessions.Single().Status);
+    }
+
+    [Fact]
+    public void ErrorOutranksWaiting()
+    {
+        var store = new EventStore();
+        store.Add(Ev("Notification", "a"));   // waiting
+        store.Add(Ev("StopFailure", "b"));    // error
+
+        var status = store.GetStatus();
+        Assert.Equal("error", status.Value);
+        Assert.Equal(1, status.ErrorCount);
+    }
+
+    [Fact]
+    public void ErrorOutranksWaitingAndWorkingTogether()
+    {
+        var store = new EventStore();
+        store.Add(Ev("Notification", "a"));   // waiting
+        store.Add(Ev("PreToolUse", "b"));     // working
+        store.Add(Ev("StopFailure", "c"));    // error
+
+        var status = store.GetStatus();
+        Assert.Equal("error", status.Value);
+        Assert.Equal(1, status.ErrorCount);
+        Assert.Equal(1, status.WaitingCount);
+        Assert.Equal(1, status.WorkingCount);
+    }
+
+    [Fact]
+    public void ErrorClearsOnNextRealEvent()
+    {
+        var store = new EventStore();
+        store.Add(Ev("StopFailure", "a"));
+        Assert.Equal("error", store.GetStatus().Sessions.Single().Status);
+
+        store.Add(Ev("UserPromptSubmit", "a"));   // retried -> back to working
+        Assert.Equal("working", store.GetStatus().Sessions.Single().Status);
+    }
+
+    [Fact]
+    public void ErrorReasonSurfacesOnLastEvent()
+    {
+        // Mirrors the "waiting" precedent: the frontend reads the reason
+        // straight off LastEvent.payload.error, no dedicated SessionState field.
+        var store = new EventStore();
+        store.Add(JsonDocument.Parse(
+            """{"hook_event_name":"StopFailure","session_id":"a","error":"rate_limit","_meta":{"hostname":"h"}}"""
+        ).RootElement.Clone());
+
+        var session = store.GetStatus().Sessions.Single();
+        Assert.Equal("error", session.Status);
+        Assert.Equal("rate_limit", session.LastEvent!.Payload.GetProperty("error").GetString());
+    }
 }

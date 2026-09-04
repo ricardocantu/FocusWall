@@ -9,7 +9,6 @@
   padding: 1rem;
 }
 .usage-card { padding: 1rem 1.25rem; border-radius: 12px; background: rgba(255,255,255,0.04); }
-.usage-card.stale { opacity: 0.45; }
 .usage-card h2 { margin: 0 0 0.6rem; font-size: clamp(16px, 1.6vw, 22px); font-weight: 600; }
 .usage-gauge { margin: 0.7rem 0; }
 .usage-gauge-label { display: flex; justify-content: space-between;
@@ -17,7 +16,9 @@
 .usage-bar { height: 10px; border-radius: 5px; background: rgba(255,255,255,0.1); overflow: hidden; }
 .usage-bar-fill { height: 100%; border-radius: 5px; }
 .usage-reset { font-size: 13px; opacity: 0.7; margin-top: 0.2rem; }
-.usage-gauge.active .usage-gauge-label { font-weight: 500; font-size: clamp(18px, 2vw, 28px); }
+/* Weight alone marks the primary limit; scaling it too left one row per card
+   larger than its neighbours. */
+.usage-gauge.active .usage-gauge-label { font-weight: 500; }
 .usage-note { font-size: 14px; opacity: 0.7; }
 @keyframes usagepulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
 .usage-gauge.active.critical .usage-bar-fill { animation: usagepulse 1.4s ease-in-out infinite; }

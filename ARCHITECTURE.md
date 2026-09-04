@@ -61,6 +61,7 @@ flowchart TB
 - **Slack panel** (`SlackService` + the pure `SlackCounts`/`SlackProfile` reducers) — polls Slack's internal `client.counts` per workspace and serves `GET /slack/state` for the hero's per-account unread panel.
 - **Usage limits** (`UsageStore` + the workstation `usage-poll` scripts) — per-machine pollers POST subscription-limit summaries to `POST /usage/report`; `GET /usage/state` feeds the `/usage` page.
 - **Snooze** — a global presentation overlay (`POST /snooze`), not a state-machine transition; per-session state stays honest while the banners and notifiers suppress the waiting alert.
+- **Calendar agenda** (`CalendarService` + `IcsParser`) — polls one or two secret iCal URLs and serves `GET /calendar/state`, which the hero renders as a *Today's meetings* panel in its bottom band.
 
 ## Data flow — event lifecycle
 
@@ -128,7 +129,7 @@ Treat unknown fields as data — don't assume the shape. Pass the payload throug
 
 ### What the wrapper adds (and removes)
 
-The wrapper also strips `tool_input` down to its `file_path` before sending — raw payloads carry full Bash command lines and entire `Write` file bodies, which should never leave the workstation (see the security model below).
+The wrapper also forwards an **allowlist** only — `hook_event_name`, `session_id`, `message`, `tool_name`, the first line of `prompt` (≤60 chars), the `error` slug of a `StopFailure`, and `tool_input.file_path` — so raw Bash command lines, entire `Write` file bodies, `tool_response`, `transcript_path` and `error_details` never leave the workstation (see the security model below). Credential-shaped free text is replaced by a fixed label, and if the filter can't run nothing is sent.
 
 ```jsonc
 {
@@ -169,10 +170,13 @@ stateDiagram-v2
     Idle --> Working: PreToolUse / UserPromptSubmit / SessionStart
     Working --> Working: any tool event
     Working --> Waiting: Notification
+    Working --> Error: StopFailure
     Working --> Done: Stop
     Working --> Idle: 15 min with no events (killed-session guard)
     Waiting --> Working: any tool event
+    Waiting --> Error: StopFailure
     Waiting --> Done: Stop
+    Error --> Working: any tool event / UserPromptSubmit
     Done --> Idle: 30s elapsed with no events
     Done --> Working: PreToolUse / UserPromptSubmit
     Idle --> [*]: SessionEnd, or 2h idle (prune)
@@ -186,6 +190,7 @@ Session identity is `(hostname, session_id)` — hostname from the wrapper scrip
 - **Working** — Most recent event was a tool event (Pre/PostToolUse), user submission, or session start.
 - **Waiting** — Most recent event was a Notification. The "look at me" state. Never decays — Claude stays blocked until you act.
 - **Done** — Most recent event was Stop. After 30s of silence, transitions to Idle.
+- **Error** — Most recent event was `StopFailure` (Claude Code hit an API or connection failure: rate limit, overloaded, authentication, billing). Outranks Waiting; never decays; clears on the session's next real event, and the reason (the hook's `error` slug) is read straight off the last event.
 
 ### Why "Waiting" sticks
 
@@ -196,7 +201,7 @@ A Notification means Claude is blocked on you. There's no separate "permission g
 The dashboard hero and the announcer both look at the same derived global status:
 
 ```
-priority = { waiting: 4, working: 3, done: 2, idle: 1 }
+priority = { error: 5, waiting: 4, working: 3, done: 2, idle: 1 }
 global.status = max(session.status for session in active_sessions, key=priority)
 ```
 
@@ -231,6 +236,7 @@ Sessions get pruned from the store when:
 
 - A `SessionEnd` event arrives — the session is removed immediately.
 - No event for 2 hours — the session is considered abandoned and dropped during the next heartbeat tick.
+- A manual close from `/mobile` (`POST /sessions/close?hostname=&sessionId=`) — idle, waiting or error sessions only; a working session can't be dismissed, and the server broadcasts only when something was actually removed.
 
 The event log itself keeps the last 200 entries regardless of session (already the case in the MVP).
 
@@ -244,8 +250,9 @@ This mapping drives the dashboard hero (and any future output channel that wants
 | Working | Blue | `#378ADD` |
 | Done | Green | `#1D9E75` |
 | Idle | Dim gray | `#888780` |
+| Error | Red | `#C0392B` |
 
-Amber rather than red for "Waiting" — red feels alarming, you want this to read as "your turn" not "emergency."
+Amber rather than red for "Waiting" — red feels alarming, you want this to read as "your turn" not "emergency." Red is reserved for Error, the one state where something is actually broken.
 
 ## Technology decisions
 
@@ -319,7 +326,7 @@ This system lives entirely on your home/office LAN. The threat model is roughly 
 - **No authentication on `POST /events`** — Anyone on the LAN can post events. Worst case, your dashboard shows garbage. If this matters, add a static bearer token in an env var the wrapper script includes (`Authorization: Bearer …`).
 - **No authentication on `GET /events/stream`** — Same reasoning.
 - **No TLS** — Plain HTTP on LAN. If you put this on the public internet (you shouldn't), add Caddy with automatic Let's Encrypt and basic auth.
-- **Payload hygiene matters** — Raw `PreToolUse` payloads include the full `tool_input`: complete Bash command lines and entire `Write` file bodies, i.e. actual source code. The wrapper therefore strips `tool_input` down to `file_path` before sending (see `hook-send.sh`), so nothing beyond file paths and tool names reaches the server. This also keeps events small for the ring buffer and SSE replay. Don't remove that filter without accepting that anyone on the LAN can read your code via `GET /events`.
+- **Payload hygiene matters** — Raw `PreToolUse` payloads include the full `tool_input`: complete Bash command lines and entire `Write` file bodies, i.e. actual source code. The wrapper therefore forwards an allowlist only (see `hook-send.sh`): event name, session id, notification message, tool name, the first line of the prompt, the error slug, and `tool_input.file_path` — so nothing beyond file paths, tool names and a one-line prompt reaches the server, and `tool_response`, `transcript_path` and `error_details` never do. Credential-shaped free text is replaced by a fixed label, and a failed filter sends nothing. This also keeps events small for the ring buffer and SSE replay. Don't loosen that filter without accepting that anyone on the LAN can read your code via `GET /events`.
 
 ## Failure modes and their handling
 

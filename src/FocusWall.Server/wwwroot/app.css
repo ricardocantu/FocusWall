@@ -3,13 +3,16 @@
   --bg-elev: #161922;
   --fg: #eaeaea;
   --fg-dim: #8a8f99;
-  --fg-faint: #555a64;
+  /* Faint carries the timestamps, so it has to clear 4.5:1 on both --bg and
+     --bg-elev; #555a64 read at 2.75:1 and vanished from across the room. */
+  --fg-faint: #7b8290;
   --border: #2a2e38;
 
   --idle: #5a5f6b;
   --working: #378ADD;
   --waiting: #BA7517;
   --done: #1D9E75;
+  --error: #C0392B;
 }
 
 * { box-sizing: border-box; }
@@ -27,7 +30,7 @@ main {
 .topbar { display: flex; align-items: center; gap: 16px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 500; font-size: 16px; }
 .brand-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--working); }
-.clock { font-variant-numeric: tabular-nums; color: var(--fg-dim); margin-left: auto; font-size: 14px; }
+.clock { font-variant-numeric: tabular-nums; color: var(--fg); margin-left: auto; font-size: 14px; }
 .conn { font-size: 12px; color: var(--fg-faint); padding: 4px 8px; border: 0.5px solid var(--border); border-radius: 6px; }
 .conn.live { color: var(--done); border-color: var(--done); }
 .conn.dead { color: var(--waiting); border-color: var(--waiting); animation: waitpulse 2s ease-in-out infinite; }
@@ -47,6 +50,8 @@ main {
 
 [data-status="waiting"] .hero { border-color: var(--waiting); animation: waitpulse 2s ease-in-out infinite; }
 [data-status="waiting"] .hero-title { color: var(--waiting); }
+[data-status="error"] .hero { border-color: var(--error); animation: errorpulse 2s ease-in-out infinite; }
+[data-status="error"] .hero-title { color: var(--error); }
 [data-status="working"] .hero { border-color: var(--working); }
 [data-status="done"] .hero { border-color: var(--done); }
 [data-status="done"] .hero-title { color: var(--done); }
@@ -64,14 +69,19 @@ main {
    header shows on the idle wall). */
 .sessions-strip[hidden] { display: none; }
 .strip-title { color: var(--fg-dim); font-size: 13px; letter-spacing: .5px; }
-.strip-cards { display: flex; flex-wrap: wrap; gap: 14px; min-width: 0; }
+/* Single row, no wrap: once cards overflow the row's width, app.js's
+   tickStripScroll() ping-pongs scrollLeft slowly rather than letting the row
+   wrap to a second line. overflow:hidden also just clips normally when
+   everything fits, and hides the (unneeded, no user interaction on a kiosk)
+   scrollbar. */
+.strip-cards { display: flex; flex-wrap: nowrap; gap: 14px; min-width: 0; overflow: hidden; }
 .mini {
   background: var(--bg-elev);
   border-radius: 12px;
   padding: 12px 16px;
   border-left: 5px solid var(--idle);
   display: flex; flex-direction: column; gap: 6px;
-  flex: 0 1 300px; min-width: 240px; max-width: 420px;
+  flex: 0 0 300px;
   transition: border-color .3s, background .3s;
 }
 .mini-status { display: flex; align-items: center; gap: 8px; }
@@ -100,6 +110,14 @@ main {
 .mini[data-status="waiting"] .dot { background: var(--waiting); }
 .mini[data-status="waiting"] .word { color: var(--waiting); }
 
+.mini[data-status="error"] {
+  border-color: var(--error);
+  background: rgba(192, 57, 43, 0.14);
+  animation: errorpulse 2s ease-in-out infinite;
+}
+.mini[data-status="error"] .dot { background: var(--error); }
+.mini[data-status="error"] .word { color: var(--error); }
+
 .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 .metric { background: var(--bg-elev); border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; gap: 4px; }
 .metric-label { color: var(--fg-dim); font-size: 13px; }
@@ -124,6 +142,7 @@ main {
 .log-list li[data-kind="Stop"] .dot { background: var(--done); }
 .log-list li[data-kind="SessionStart"] .dot { background: var(--working); }
 .log-list li[data-kind="SessionEnd"] .dot { background: var(--idle); }
+.log-list li[data-kind="StopFailure"] .dot { background: var(--error); }
 
 /* --- Grid view (index.html / grid.js) --- */
 /* Grid page has only 2 rows (topbar + grid), unlike the hero's 4. Override the
@@ -192,6 +211,23 @@ main {
   0%, 100% { box-shadow: 0 0 0 0 rgba(186, 117, 23, 0.0); }
   50%      { box-shadow: 0 0 0 4px rgba(186, 117, 23, 0.25); }
 }
+
+@keyframes errorpulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(192, 57, 43, 0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(192, 57, 43, 0.25); }
+}
+
+/* Error outranks waiting (see EventStore._priority) and gets its own loud red
+   pulse — distinct from the amber waiting pulse so the two are never confused
+   at a glance. */
+.card[data-status="error"] {
+  border-color: var(--error);
+  background: rgba(192, 57, 43, 0.14);
+  animation: errorpulse 2s ease-in-out infinite;
+}
+.card[data-status="error"] .dot { background: var(--error); }
+.card[data-status="error"] .status-word { color: var(--error); }
+.card[data-status="error"] .card-msg { color: var(--error); }
 
 /* --- /wall rotator + news ticker (wall.html / wall.js) --- */
 /* body carries .wall-page here; override the global hidden-overflow grid body. */
@@ -284,7 +320,31 @@ body.wall-page { display: flex; flex-direction: column; height: 100vh; overflow:
   display: flex; flex-direction: column; min-height: 0;
 }
 .band-panel.active { opacity: 1; pointer-events: auto; }
-.band-panel > .log, .band-panel > .metrics { flex: 1 1 auto; min-height: 0; }
+/* Load-bearing, like .slack-panel[hidden]: the display:flex above beats the UA
+   sheet's [hidden] rule, so without this an off-by-default panel would stay in
+   flow as an invisible overlay instead of being removed. */
+.band-panel[hidden] { display: none; }
+.band-panel > .log, .band-panel > .metrics, .band-panel > .calendar-panel { flex: 1 1 auto; min-height: 0; }
 .band-panel > .metrics { align-content: start; }
 #panel-usage { overflow-y: auto; }
-.band-usage-title { padding: 4px 2px 0; }
+/* In the band, the usage grid fills edge-to-edge like the metrics/log panels
+   (which sit at inset:0). The .usage-accounts 1rem padding is for the
+   standalone /usage page's viewport gutter; drop it here so the usage cards'
+   left/top edges line up with the metric cards in the crossfade. */
+#panel-usage .usage-accounts { padding: 0; }
+
+/* Calendar agenda pane — mirrors .log's box styling (background/padding/
+   radius) so all four band panels read as one visual family. */
+.calendar-panel { background: var(--bg-elev); border-radius: 12px; padding: 18px 22px;
+  overflow: hidden; display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.calendar-title { color: var(--fg-dim); font-size: 13px; font-weight: 500; margin-bottom: 12px; }
+.calendar-agenda { list-style: none; margin: 0; padding: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px; }
+.calendar-row { display: grid; grid-template-columns: 110px 1fr auto; align-items: center;
+  gap: 10px; font-size: 19px; }
+.calendar-row .cal-time { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.calendar-row .cal-title { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-row .cal-source { color: var(--working); font-size: 15px; font-weight: 600; text-align: right; }
+.calendar-row.all-day .cal-time { color: var(--waiting); }
+.calendar-row.error, .calendar-row.empty { grid-template-columns: 1fr; color: var(--fg-faint); }
+.calendar-row.error { color: var(--waiting); }

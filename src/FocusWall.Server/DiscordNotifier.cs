@@ -21,6 +21,25 @@ public class DiscordNotifier(
     // Colors as decimal ints (Discord's embed.color format).
     // Matches the wall's palette in ARCHITECTURE.md.
     private const int ColorWaiting = 0xBA7517;  // amber
+    private const int ColorError   = 0xC0392B;  // red — matches the usage page's "critical" severity
+
+    // Sessions in either of these statuses get an alert. Keyed by the specific
+    // status (not just set membership) below, so a waiting -> error or
+    // error -> waiting transition still fires a fresh alert.
+    private static readonly HashSet<string> AlertStatuses = new() { "waiting", "error" };
+
+    private static readonly Dictionary<string, string> ErrorLabels = new()
+    {
+        ["rate_limit"] = "rate limited",
+        ["overloaded"] = "overloaded",
+        ["authentication_failed"] = "authentication failed",
+        ["billing_error"] = "billing issue",
+        ["server_error"] = "server error",
+        ["invalid_request"] = "invalid request",
+        ["model_not_found"] = "model not found",
+        ["oauth_org_not_allowed"] = "OAuth blocked for org",
+        ["unknown"] = "connection or unknown error",
+    };
 
     // Per-session tracking, same pattern as EchoAnnouncer.
     private readonly Dictionary<SessionKey, string> _lastNotifiedStatus = new();
@@ -45,10 +64,13 @@ public class DiscordNotifier(
                 if (msg.Kind != "status") continue;
                 if (msg.Data is not GlobalStatus global) continue;
 
-                // Notify for any session freshly transitioning to "waiting".
-                foreach (var session in global.Sessions.Where(s => s.Status == "waiting"))
+                // Notify for any session freshly transitioning into an alert
+                // status (waiting or error) — keyed on the specific status so a
+                // waiting -> error or error -> waiting transition still fires a
+                // fresh alert instead of being swallowed as "already notified".
+                foreach (var session in global.Sessions.Where(s => AlertStatuses.Contains(s.Status)))
                 {
-                    if (_lastNotifiedStatus.TryGetValue(session.Key, out var prev) && prev == "waiting")
+                    if (_lastNotifiedStatus.TryGetValue(session.Key, out var prev) && prev == session.Status)
                         continue;
 
                     if (global.SnoozedUntil > DateTimeOffset.UtcNow)
@@ -56,14 +78,14 @@ public class DiscordNotifier(
                         // Mark as notified so it doesn't back-fire the instant
                         // snooze ends — same bookkeeping as quiet hours.
                         log.LogInformation("Suppressed (snoozed) for {Session}", session.Key.Short);
-                        _lastNotifiedStatus[session.Key] = "waiting";
+                        _lastNotifiedStatus[session.Key] = session.Status;
                         continue;
                     }
 
                     if (IsQuietHours())
                     {
                         log.LogInformation("Suppressed (quiet hours) for {Session}", session.Key.Short);
-                        _lastNotifiedStatus[session.Key] = "waiting";
+                        _lastNotifiedStatus[session.Key] = session.Status;
                         continue;
                     }
 
@@ -76,11 +98,11 @@ public class DiscordNotifier(
 
                     await NotifyAsync(session, ct);
                     _lastNotifiedAt[session.Key] = DateTimeOffset.UtcNow;
-                    _lastNotifiedStatus[session.Key] = "waiting";
+                    _lastNotifiedStatus[session.Key] = session.Status;
                 }
 
-                // Reset when a session leaves "waiting" so the next waiting fires again.
-                foreach (var session in global.Sessions.Where(s => s.Status != "waiting"))
+                // Reset when a session leaves the alert set so the next alert fires again.
+                foreach (var session in global.Sessions.Where(s => !AlertStatuses.Contains(s.Status)))
                     _lastNotifiedStatus[session.Key] = session.Status;
 
                 // Prune ended sessions.
@@ -98,21 +120,35 @@ public class DiscordNotifier(
 
     private async Task NotifyAsync(SessionState session, CancellationToken ct)
     {
-        // Try to pull the human-readable message from the triggering event.
-        var description = "Permission requested";
-        if (session.LastEvent is { Payload: var payload }
-            && payload.TryGetProperty("message", out var msgEl)
-            && msgEl.ValueKind == JsonValueKind.String)
+        string title, description;
+        int color;
+
+        if (session.Status == "error")
         {
-            var m = msgEl.GetString();
-            if (!string.IsNullOrWhiteSpace(m)) description = m!;
+            title = "Claude hit an error";
+            color = ColorError;
+            description = ErrorLabel(session.LastEvent);
+        }
+        else
+        {
+            title = "Claude is waiting for you";
+            color = ColorWaiting;
+            // Try to pull the human-readable message from the triggering event.
+            description = "Permission requested";
+            if (session.LastEvent is { Payload: var payload }
+                && payload.TryGetProperty("message", out var msgEl)
+                && msgEl.ValueKind == JsonValueKind.String)
+            {
+                var m = msgEl.GetString();
+                if (!string.IsNullOrWhiteSpace(m)) description = m!;
+            }
         }
 
         var embed = new Dictionary<string, object?>
         {
-            ["title"] = "Claude is waiting for you",
+            ["title"] = title,
             ["description"] = description,
-            ["color"] = ColorWaiting,
+            ["color"] = color,
             ["fields"] = new object[]
             {
                 new { name = "Session", value = $"`{session.Key.Short}`", inline = true },
@@ -146,6 +182,18 @@ public class DiscordNotifier(
         {
             log.LogWarning(ex, "Discord webhook call failed");
         }
+    }
+
+    private static string ErrorLabel(EventEntry? lastEvent)
+    {
+        if (lastEvent is { Payload: var payload }
+            && payload.TryGetProperty("error", out var errEl)
+            && errEl.ValueKind == JsonValueKind.String)
+        {
+            var slug = errEl.GetString();
+            if (slug is not null) return ErrorLabels.TryGetValue(slug, out var label) ? label : slug;
+        }
+        return "unknown error";
     }
 
     private bool IsQuietHours()

@@ -30,7 +30,7 @@ function fmtStamp(iso) {
   const date = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   const sameDay = d.toDateString() === new Date().toDateString();
   if (!sameDay) return date;
-  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
   return `${date}, ${time}`;
 }
 

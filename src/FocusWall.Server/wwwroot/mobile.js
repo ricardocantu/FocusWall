@@ -15,8 +15,20 @@ const clearBtn  = snoozeEl.querySelector('.m-snooze-clear');
 
 let snoozedUntil = null;   // Date when snooze ends, or null. Overlay, not a status.
 
-const STATUS_WORD  = { idle: 'Idle', working: 'Working', waiting: 'Waiting', done: 'Done' };
-const SUMMARY_WORD = { idle: 'All idle', working: 'Working', waiting: 'Waiting for you', done: 'Done' };
+const STATUS_WORD  = { idle: 'Idle', working: 'Working', waiting: 'Waiting', done: 'Done', error: 'Error' };
+const SUMMARY_WORD = { idle: 'All idle', working: 'Working', waiting: 'Waiting for you', done: 'Done', error: 'Error occurred' };
+
+const ERROR_LABEL = {
+  rate_limit: 'rate limited',
+  overloaded: 'overloaded',
+  authentication_failed: 'authentication failed',
+  billing_error: 'billing issue',
+  server_error: 'server error',
+  invalid_request: 'invalid request',
+  model_not_found: 'model not found',
+  oauth_org_not_allowed: 'OAuth blocked for org',
+  unknown: 'connection or unknown error',
+};
 
 let sessions = [];
 let lastStatus = { value: 'idle', sessions: [] };   // last status payload, for local snooze re-render
@@ -79,6 +91,7 @@ function renderSummary(s) {
   const parts = [];
   if (s.waitingCount) parts.push(`${s.waitingCount} waiting`);
   if (s.workingCount) parts.push(`${s.workingCount} working`);
+  if (s.errorCount) parts.push(`${s.errorCount} error`);
   parts.push(`${total} session${total === 1 ? '' : 's'}`);
   subEl.textContent = parts.join(' · ');
 }
@@ -100,6 +113,21 @@ async function snooze(minutes) {
 snoozeEl.addEventListener('click', (e) => {
   const btn = e.target.closest('.m-snooze-btn');
   if (btn) snooze(Number(btn.dataset.minutes));
+});
+
+// Manual per-session close (idle/waiting/error only) — mirrors snooze's
+// fire-and-forget pattern: no optimistic removal, the card disappears when
+// SSE delivers the resulting status broadcast.
+async function closeSession(hostname, sessionId) {
+  try {
+    const q = new URLSearchParams({ hostname, sessionId });
+    await fetch(`/sessions/close?${q}`, { method: 'POST' });
+  } catch { /* fire-and-forget; SSE will reconcile on the next status */ }
+}
+
+listEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('.card-close');
+  if (btn) closeSession(btn.dataset.hostname, btn.dataset.sessionId);
 });
 
 // Cards built with textContent, never innerHTML — payload fields (message, cwd)
@@ -150,7 +178,7 @@ function renderList() {
     }
     card.appendChild(meta);
 
-    if (s.status === 'working' || s.status === 'waiting') {
+    if (s.status === 'working' || s.status === 'waiting' || s.status === 'error') {
       const wo = prompts.get(keyOf(s.key));
       if (wo) {
         const w = document.createElement('div');
@@ -183,6 +211,24 @@ function renderList() {
         m.textContent = msg;
         card.appendChild(m);
       }
+    }
+
+    if (s.status === 'error') {
+      const slug = s.lastEvent?.payload?.error;
+      const m = document.createElement('div');
+      m.className = 'card-msg';
+      m.textContent = slug ? `Error occurred · ${ERROR_LABEL[slug] || slug}` : 'Error occurred';
+      card.appendChild(m);
+    }
+
+    if (s.status === 'idle' || s.status === 'waiting' || s.status === 'error') {
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'card-close';
+      close.dataset.hostname = s.key?.hostname || '';
+      close.dataset.sessionId = s.key?.sessionId || '';
+      close.textContent = 'Close';
+      card.appendChild(close);
     }
 
     listEl.appendChild(card);

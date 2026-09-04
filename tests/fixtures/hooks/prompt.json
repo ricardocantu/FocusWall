@@ -1,0 +1,1 @@
+{"hook_event_name":"UserPromptSubmit","session_id":"sess-1","cwd":"/home/you/projects/my-project","prompt":"Refactor the event store so that sessions are keyed by host and id, then run the tests\nsecond line must never appear"}

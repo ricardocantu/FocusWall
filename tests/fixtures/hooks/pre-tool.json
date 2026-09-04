@@ -1,0 +1,1 @@
+{"hook_event_name":"PreToolUse","session_id":"sess-1","transcript_path":"/home/you/.claude/projects/x/transcript.jsonl","cwd":"/home/you/projects/my-project","permission_mode":"default","tool_name":"Bash","tool_input":{"command":"cat ~/.aws/credentials","file_path":"/home/you/projects/my-project/src/app.js"},"tool_use_id":"toolu_01"}
